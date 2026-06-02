@@ -1,0 +1,9 @@
+{
+  "qr_secret_key": "SuperSecretKeyForQRCodeSign",
+  "auth_secret_key": "SuperSecretKeyForAuth",
+  "wechat_appid": "wx233c9f77cdd5fe03",
+  "wechat_secret": "4a355ccd90099cbd01a8f05defa3dca5",
+  "redis_addr": "127.0.0.1:6379",
+  "redis_password": "123456",
+  "redis_db": 0
+}

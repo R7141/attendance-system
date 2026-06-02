@@ -1,0 +1,6 @@
+{
+  "qr_secret_key": "CHANGE_ME_QR_SECRET",
+  "auth_secret_key": "CHANGE_ME_AUTH_SECRET",
+  "wechat_appid": "CHANGE_ME_WECHAT_APPID",
+  "wechat_secret": "CHANGE_ME_WECHAT_SECRET"
+}

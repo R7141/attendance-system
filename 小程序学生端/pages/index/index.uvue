@@ -1,0 +1,807 @@
+<template>
+	<view class="container">
+		<view class="header">
+			<view class="title">扫码签到</view>
+			<view class="subtitle">填写学号姓名后扫码，自动带上当前 WiFi BSSID</view>
+		</view>
+
+		<view class="card">
+			<view class="card-title">学生信息</view>
+			<view class="form">
+				<view class="form-item">
+					<text class="label">学生姓名</text>
+					<input class="text-input" v-model="studentName" placeholder="请输入姓名" :disabled="wxBound" />
+				</view>
+				<view class="form-item">
+					<text class="label">学号</text>
+					<input class="text-input" v-model="studentId" placeholder="请输入学号" :disabled="wxBound" />
+				</view>
+			</view>
+			<view class="actions">
+				<button v-if="!wxBound" class="btn" type="default" @click.stop="bindStudent">保存到本机</button>
+				<button v-else class="btn btn-ghost" type="default" @click.stop="unlockEdit">重新编辑</button>
+				<view v-if="wxBound" class="bind-tip">已保存到本机</view>
+			</view>
+		</view>
+
+		<view class="card">
+			<view class="card-title">签到操作</view>
+			<view class="scan-button" @click="scanQRCode">
+				<view class="scan-left">
+					<image class="scan-icon" src="/static/scanQRcode.png" mode="aspectFit"></image>
+					<view class="scan-text">
+						<view class="scan-title">扫描签到二维码</view>
+						<view class="scan-desc">将自动调用签到接口</view>
+					</view>
+				</view>
+				<view class="scan-right">›</view>
+			</view>
+
+			<view class="actions" style="margin-top: 16rpx;">
+				<button class="btn" type="default" @click.stop="checkAbsenceAlerts">查看通知</button>
+			</view>
+
+			<view class="chips">
+				<view class="chip" :class="wxToken ? 'chip-ok' : 'chip-warn'">
+					<text class="chip-text">微信：{{ wxToken ? '已登录' : '未登录' }}</text>
+				</view>
+				<view class="chip" :class="wxBound ? 'chip-ok' : 'chip-warn'">
+					<text class="chip-text">信息：{{ wxBound ? '已保存' : '未保存' }}</text>
+				</view>
+				<view class="chip" :class="lastLatitude && lastLongitude ? 'chip-ok' : 'chip-muted'">
+					<text class="chip-text">定位：{{ lastLatitude && lastLongitude ? '已获取' : '未获取' }}</text>
+				</view>
+				<view class="chip" :class="wifiBSSID ? 'chip-ok' : 'chip-warn'">
+					<text class="chip-text">WiFi：{{ wifiBSSID ? '已连接' : '未连接' }}</text>
+				</view>
+				<view class="chip" :class="signRequest ? 'chip-ok' : 'chip-muted'">
+					<text class="chip-text">结果：{{ signRequest ? '已返回' : '未请求' }}</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="card">
+			<view class="card-title">结果</view>
+			<view class="kv">
+				<view class="kv-row">
+					<text class="kv-key">扫描内容</text>
+					<text class="kv-val mono">{{ signCode || '-' }}</text>
+				</view>
+				<view class="kv-row">
+					<text class="kv-key">服务返回</text>
+					<text class="kv-val mono">{{ prettySignRequest }}</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="card">
+			<view class="card-title">网络信息</view>
+			<view class="kv">
+				<view class="kv-row">
+					<text class="kv-key">SSID</text>
+					<text class="kv-val">{{ wifiSSID || '-' }}</text>
+				</view>
+				<view class="kv-row">
+					<text class="kv-key">BSSID（device_id）</text>
+					<text class="kv-val mono">{{ wifiBSSID || '-' }}</text>
+				</view>
+				<view class="kv-row">
+					<text class="kv-key">可见 WiFi 数</text>
+					<text class="kv-val">{{ (wifiList && wifiList.length) ? wifiList.length : 0 }}</text>
+				</view>
+			</view>
+			<view class="actions">
+				<button class="btn" type="default" @click.stop="toggleWifiList">{{ showWifiList ? '收起列表' : '展开列表' }}</button>
+			</view>
+			<view v-if="showWifiList" class="wifi-list">
+				<view v-for="(w, idx) in wifiList" :key="idx" class="wifi-item">
+					<view class="wifi-name">{{ w.SSID || '-' }}</view>
+					<view class="wifi-meta mono">{{ w.BSSID || '' }}</view>
+				</view>
+			</view>
+		</view>
+
+		<!-- 缺勤提醒模态框 -->
+		<view v-if="showAbsenceModal" class="modal-overlay" @click="showAbsenceModal = false">
+			<view class="modal-content" @click.stop>
+				<view class="modal-header">
+					<text class="modal-title">通知</text>
+				</view>
+				<view class="modal-body">
+					<view v-if="absences && absences.length">
+						<view v-for="(alert, index) in absences" :key="alert.id || index" class="alert-item">
+							<view class="alert-icon">⚠️</view>
+							<view class="alert-content">
+								<view class="alert-title">{{ alert.course_name }}提醒你去上课了</view>
+								<view class="alert-time">{{ new Date(alert.created_at).toLocaleString() }}</view>
+							</view>
+						</view>
+					</view>
+					<view v-else class="alert-empty">
+						<view class="alert-icon">ℹ️</view>
+						<view class="alert-content">
+							<view class="alert-title">暂无通知</view>
+						</view>
+					</view>
+				</view>
+				<view class="modal-footer">
+					<button class="btn" @click="showAbsenceModal = false">我知道了</button>
+				</view>
+			</view>
+		</view>
+
+	</view>
+</template>
+<script>
+	export default {
+		computed: {
+			prettySignRequest() {
+				if (!this.signRequest) return '-';
+				if (typeof this.signRequest === 'string') return this.signRequest;
+				try {
+					return JSON.stringify(this.signRequest);
+				} catch (e) {
+					return String(this.signRequest);
+				}
+			}
+		},
+		data() {
+			return {
+				apiBase: 'http://10.62.128.98:8080',
+				wxToken: '',
+				wxBound: false,
+				studentName: '',
+				studentId: '',
+				signCode: '',
+				signRequest: '',
+				connectedWifi: '',
+				wifiSSID:'',
+				wifiBSSID:'',
+				lastLatitude: 0,
+				lastLongitude: 0,
+				wifiList:[],
+				showWifiList: false,
+				absences: [],
+				showAbsenceModal: false
+			}
+		},
+		onLoad() {
+			const t = uni.getStorageSync('wx_token');
+			if (t) this.wxToken = String(t);
+			const b = uni.getStorageSync('student_binding');
+			if (b && b.student_id && b.student_name) {
+				this.wxBound = true;
+				this.studentId = b.student_id;
+				this.studentName = b.student_name;
+			}
+			// 强制登录并获取提醒
+			this.ensureWxLogin(true).then(() => {
+				this.fetchAbsenceAlerts();
+			}).catch(() => {});
+		},
+		methods: {
+			requestJson({ url, method, data, header, timeout }) {
+				return new Promise((resolve, reject) => {
+					uni.request({
+						url,
+						method: method || 'GET',
+						header: header || { 'content-type': 'application/json' },
+						data,
+						timeout: timeout || 12000,
+						success: (res) => resolve(res),
+						fail: (err) => reject(err),
+					});
+				});
+			},
+			ensureWxLogin(force) {
+				if (!force && this.wxToken) return Promise.resolve(this.wxToken);
+				return new Promise((resolve, reject) => {
+					uni.login({
+						provider: 'weixin',
+						success: (r) => {
+							const code = r.code;
+							if (!code) return reject(new Error('获取微信登录凭证失败'));
+							this.requestJson({
+								url: `${this.apiBase}/wx/login`,
+								method: 'POST',
+								data: { code },
+								header: { 'content-type': 'application/json' },
+								timeout: 12000,
+							}).then((res) => {
+								const body = res.data;
+								if (res.statusCode !== 200 || !body || body.code !== 0) {
+									return reject(new Error(body?.message || '微信登录失败'));
+								}
+								const data = body.data || {};
+								const token = String(data.token || '');
+								if (!token) return reject(new Error('微信登录失败：缺少token'));
+								this.wxToken = token;
+								uni.setStorageSync('wx_token', token);
+								resolve(token);
+							}).catch((e) => reject(new Error(e?.errMsg || e?.message || '微信登录失败')));
+						},
+						fail: (err) => reject(new Error(err?.errMsg || '微信登录失败')),
+					});
+				});
+			},
+			outOfChina(lat, lng) {
+				return !(lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55);
+			},
+			gcj02ToBd09(lat, lng) {
+				const x = lng;
+				const y = lat;
+				const z = Math.sqrt(x * x + y * y) + 0.00002 * Math.sin(y * Math.PI * 3000.0 / 180.0);
+				const theta = Math.atan2(y, x) + 0.000003 * Math.cos(x * Math.PI * 3000.0 / 180.0);
+				const bdLng = z * Math.cos(theta) + 0.0065;
+				const bdLat = z * Math.sin(theta) + 0.006;
+				return { lat: bdLat, lng: bdLng };
+			},
+			bindStudent() {
+				if (!this.studentName.trim() || !this.studentId.trim()) {
+					uni.showToast({ title: '请先填写姓名和学号', icon: 'none' });
+					return Promise.reject(new Error('missing student info'));
+				}
+				this.studentId = this.studentId.trim();
+				this.studentName = this.studentName.trim();
+				uni.setStorageSync('student_binding', { student_id: this.studentId, student_name: this.studentName });
+				this.wxBound = true;
+				uni.showToast({ title: '已保存' });
+				return Promise.resolve();
+			},
+			unlockEdit() {
+				this.wxBound = false;
+				uni.showToast({ title: '已解锁，可修改后保存', icon: 'none' });
+			},
+			toggleWifiList() {
+				this.showWifiList = !this.showWifiList;
+			},
+			fetchAbsenceAlerts(retried) {
+				if (!this.wxToken) {
+					uni.showToast({ title: '请先登录微信', icon: 'none' });
+					return;
+				}
+				this.requestJson({
+					url: `${this.apiBase}/absences/alerts`,
+					method: 'GET',
+					header: {
+						'content-type': 'application/json',
+						Authorization: `Bearer ${this.wxToken}`,
+					},
+					timeout: 10000,
+				}).then((res) => {
+					const code = res.data?.code;
+					const msg = String(res.data?.message || '');
+					if ((res.statusCode === 401 || (res.statusCode === 400 && msg.includes('openid')) || msg.includes('未登录') || msg.includes('登录已失效')) && !retried) {
+						return this.ensureWxLogin(true).then(() => this.fetchAbsenceAlerts(true)).catch(() => {
+							uni.showToast({ title: '登录已失效，请重新登录', icon: 'none' });
+						});
+					}
+					if (res.statusCode === 200 && res.data && code === 0) {
+						const alerts = res.data.data?.alerts || [];
+						this.absences = Array.isArray(alerts) ? alerts : [];
+						this.showAbsenceModal = true;
+						return;
+					}
+					uni.showToast({ title: msg || `请求失败(${res.statusCode})`, icon: 'none' });
+				}).catch((e) => {
+					uni.showToast({ title: e?.errMsg || e?.message || '网络请求失败', icon: 'none' });
+				});
+			},
+			scanQRCode() {
+				Promise.resolve().then(() => {
+					return this.ensureWxLogin(false).catch(() => '');
+				}).then(() => {
+					if (!this.wxBound) {
+						uni.showToast({ title: '请先绑定学号姓名', icon: 'none' });
+						throw new Error('not bound');
+					}
+					uni.scanCode({
+						success: (res) => {
+							console.log('扫描结果：' + res.result);
+							this.signCode = res.result;
+							let requestData;
+							try {
+								requestData = JSON.parse(this.signCode);
+							} catch (e) {
+								uni.showToast({ title: '二维码内容不是JSON', icon: 'none' });
+								return;
+							}
+
+							const proceed = () => {
+								const submit = () => {
+									const payload = {
+										...requestData,
+										student_id: this.studentId.trim(),
+										student_name: this.studentName.trim(),
+										device_id: this.wifiBSSID || '',
+										latitude: this.lastLatitude || 0,
+										longitude: this.lastLongitude || 0,
+									};
+
+									const formatReasons = (reasons) => {
+										const arr = Array.isArray(reasons) ? reasons : [];
+										const map = {
+											auth_invalid: '微信登录已失效/未登录',
+											wifi_missing: '未连接指定 WiFi',
+											wifi_not_whitelisted: 'WiFi 不在白名单',
+											ip_not_whitelisted: '出口IP不在允许范围内',
+											gps_missing: '未获取定位',
+											gps_out_of_range: '定位不在允许范围内',
+										};
+										const lines = arr.map(r => map[r] || String(r)).filter(Boolean);
+										return lines.length ? lines.join('\n') : '检测到异常签到';
+									};
+
+									const postOnce = (retried, confirmed) => {
+										payload.confirm_abnormal = !!confirmed;
+										this.requestJson({
+											url: `${this.apiBase}/signin`,
+											method: 'POST',
+											header: {
+												'content-type': 'application/json',
+												Authorization: `Bearer ${this.wxToken}`,
+											},
+											data: payload,
+											timeout: 15000,
+										}).then((res) => {
+											this.signRequest = res.data;
+											if (res.statusCode === 401 && !retried) {
+												return this.ensureWxLogin(true).then(() => postOnce(true, confirmed));
+											}
+											if (res.statusCode === 200 && res.data && res.data.code === 1001 && !confirmed) {
+												const reasons = res.data?.data?.reasons;
+												uni.showModal({
+													title: '异常签到确认',
+													content: formatReasons(reasons) + '\n\n是否确认继续签到？',
+													success: (r) => {
+														if (r.confirm) postOnce(retried, true);
+													},
+												});
+												return;
+											}
+											if (res.statusCode === 200 && res.data && res.data.code === 0) {
+												// 检查是否有status字段，判断是否迟到
+												const status = res.data?.data?.status;
+												if (status === 'late') {
+													uni.showToast({ title: '迟到签到成功' });
+												} else {
+													uni.showToast({ title: '签到成功' });
+												}
+											} else {
+												const msg = res.data?.message || `签到失败(${res.statusCode})`;
+												uni.showToast({ title: msg, icon: 'none' });
+											}
+										}).catch((err) => {
+											console.error('错误', err);
+											const msg = String(err?.errMsg || err?.message || '');
+											if (msg.includes('timeout')) {
+												uni.showToast({ title: '请求超时，请检查网络/服务器地址', icon: 'none' });
+											} else {
+												uni.showToast({ title: '网络请求失败', icon: 'none' });
+											}
+										});
+									};
+									postOnce(false, false);
+								};
+
+								uni.startWifi({
+									success: () => {
+										uni.getConnectedWifi({
+											success: (res) => {
+												this.connectedWifi = res.wifi
+												this.wifiSSID = res.wifi.SSID
+												this.wifiBSSID = res.wifi.BSSID
+												submit();
+											},
+											fail: (err) => {
+												console.error('获取当前连接的wifi 失败:', err)
+												this.connectedWifi = ''
+												this.wifiSSID = ''
+												this.wifiBSSID = ''
+												submit()
+											},
+										})
+									},
+									fail: (err) => {
+										console.error('启动wifi 失败', err)
+										this.connectedWifi = ''
+										this.wifiSSID = ''
+										this.wifiBSSID = ''
+										submit()
+									},
+								})
+							};
+
+							uni.getLocation({
+								type: 'gcj02',
+								success: (loc) => {
+									const lat = loc.latitude || 0;
+									const lng = loc.longitude || 0;
+									if (lat && lng && !this.outOfChina(lat, lng)) {
+										const bd = this.gcj02ToBd09(lat, lng);
+										this.lastLatitude = bd.lat;
+										this.lastLongitude = bd.lng;
+									} else {
+										this.lastLatitude = lat;
+										this.lastLongitude = lng;
+									}
+									proceed();
+								},
+								fail: () => {
+									this.lastLatitude = 0;
+									this.lastLongitude = 0;
+									proceed();
+								}
+							});
+
+							uni.getWifiList({
+								success() {},
+								fail(err) {
+									console.error('请求获取 Wi-Fi 列表失败:', err);
+								}
+							});
+
+							uni.onGetWifiList((res) => {
+								this.wifiList = res.wifiList;
+							});
+						},
+						fail: (err) => {
+							console.error('扫描失败：', err);
+							uni.showToast({
+								title: '扫描失败，请重试',
+								icon: 'none'
+							});
+						}
+					});
+				}).catch((err) => {
+					if (err && err.message && err.message !== 'missing student info') {
+						uni.showToast({ title: err.message, icon: 'none' });
+					}
+					})
+				},
+				checkAbsenceAlerts() {
+					if (!this.wxToken) {
+						this.ensureWxLogin(false).then(() => {
+							this.fetchAbsenceAlerts(false);
+						});
+					} else {
+						this.fetchAbsenceAlerts(false);
+					}
+				},
+			}
+	}
+</script>
+
+<style>
+	.container {
+		min-height: 100vh;
+		padding: 40rpx;
+		background: linear-gradient(180deg, #eef5ff 0%, #f6f7fb 55%, #f5f5f5 100%);
+	}
+
+	.header {
+		margin-bottom: 24rpx;
+	}
+
+	.title {
+		font-size: 44rpx;
+		color: #1f2937;
+		font-weight: 700;
+		letter-spacing: 1rpx;
+	}
+
+	.subtitle {
+		margin-top: 10rpx;
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.card {
+		background-color: #ffffff;
+		border-radius: 18rpx;
+		padding: 24rpx;
+		margin-bottom: 20rpx;
+		box-shadow: 0 10rpx 30rpx rgba(17, 24, 39, 0.08);
+		border: 1rpx solid rgba(229, 231, 235, 0.7);
+	}
+
+	.card-title {
+		font-size: 28rpx;
+		color: #374151;
+		font-weight: 600;
+		margin-bottom: 16rpx;
+	}
+	
+	.form {
+		display: flex;
+		flex-direction: column;
+		gap: 18rpx;
+	}
+	
+	.form-item {
+		display: flex;
+		flex-direction: column;
+		gap: 10rpx;
+	}
+	
+	.label {
+		display: block;
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+	
+	.text-input {
+		background-color: #f9fafb;
+		border-radius: 14rpx;
+		padding: 22rpx;
+		font-size: 30rpx;
+		height: 100rpx;
+		border: 1rpx solid #e5e7eb;
+	}
+
+	.scan-button {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 18rpx 18rpx;
+		border-radius: 16rpx;
+		background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+		color: #fff;
+	}
+
+	.scan-left {
+		display: flex;
+		align-items: center;
+		gap: 14rpx;
+	}
+
+	.scan-icon {
+		width: 72rpx;
+		height: 72rpx;
+		background-color: rgba(255, 255, 255, 0.18);
+		border-radius: 16rpx;
+		padding: 10rpx;
+	}
+
+	.scan-text {
+		display: flex;
+		flex-direction: column;
+		gap: 6rpx;
+	}
+
+	.scan-title {
+		font-size: 30rpx;
+		font-weight: 700;
+		color: #fff;
+	}
+
+	.scan-desc {
+		font-size: 24rpx;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.scan-right {
+		font-size: 44rpx;
+		color: rgba(255, 255, 255, 0.9);
+		padding-left: 12rpx;
+	}
+
+	.chips {
+		display: flex;
+		gap: 12rpx;
+		margin-top: 16rpx;
+		flex-wrap: wrap;
+	}
+
+	.chip {
+		padding: 10rpx 14rpx;
+		border-radius: 999rpx;
+		border: 1rpx solid #e5e7eb;
+		background-color: #f9fafb;
+	}
+
+	.chip-text {
+		font-size: 24rpx;
+		color: #374151;
+	}
+
+	.chip-ok {
+		background-color: #ecfdf5;
+		border-color: #a7f3d0;
+	}
+
+	.chip-ok .chip-text {
+		color: #065f46;
+	}
+
+	.chip-warn {
+		background-color: #fff7ed;
+		border-color: #fed7aa;
+	}
+
+	.chip-warn .chip-text {
+		color: #9a3412;
+	}
+
+	.chip-muted {
+		background-color: #f3f4f6;
+		border-color: #e5e7eb;
+	}
+
+	.kv {
+		display: flex;
+		flex-direction: column;
+		gap: 14rpx;
+	}
+
+	.kv-row {
+		display: flex;
+		flex-direction: column;
+		gap: 8rpx;
+		padding: 16rpx;
+		border-radius: 14rpx;
+		background-color: #f9fafb;
+		border: 1rpx solid #e5e7eb;
+	}
+
+	.kv-key {
+		font-size: 24rpx;
+		color: #6b7280;
+	}
+
+	.kv-val {
+		font-size: 26rpx;
+		color: #111827;
+		word-break: break-all;
+		line-height: 36rpx;
+	}
+
+	.mono {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	}
+
+	.actions {
+		margin-top: 16rpx;
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.bind-tip {
+		font-size: 24rpx;
+		color: #6b7280;
+		align-self: center;
+	}
+
+	.btn {
+		border-radius: 999rpx;
+		padding: 14rpx 18rpx;
+		font-size: 26rpx;
+		border: 1rpx solid #e5e7eb;
+		background-color: #ffffff;
+	}
+
+	.btn-ghost {
+		margin-left: 12rpx;
+		background-color: #f9fafb;
+		color: #111827;
+	}
+
+	.wifi-list {
+		margin-top: 16rpx;
+		display: flex;
+		flex-direction: column;
+		gap: 10rpx;
+	}
+
+	.wifi-item {
+		padding: 14rpx 16rpx;
+		border-radius: 14rpx;
+		border: 1rpx solid #e5e7eb;
+		background-color: #ffffff;
+	}
+
+	.wifi-name {
+		font-size: 26rpx;
+		color: #111827;
+		margin-bottom: 6rpx;
+	}
+
+	.wifi-meta {
+				font-size: 24rpx;
+				color: #6b7280;
+			}
+
+		/* 模态框样式 */
+		.modal-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background-color: rgba(0, 0, 0, 0.5);
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			z-index: 9999;
+		}
+
+		.modal-content {
+			background-color: #ffffff;
+			border-radius: 20rpx;
+			width: 80%;
+			max-width: 500rpx;
+			box-shadow: 0 20rpx 40rpx rgba(0, 0, 0, 0.15);
+		}
+
+		.modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 24rpx;
+			border-bottom: 1rpx solid #e5e7eb;
+		}
+
+		.modal-title {
+			font-size: 32rpx;
+			font-weight: 700;
+			color: #111827;
+		}
+
+		.modal-close {
+			font-size: 40rpx;
+			color: #6b7280;
+			padding: 8rpx;
+			line-height: 1;
+		}
+
+		.modal-body {
+			padding: 24rpx;
+		}
+
+		.alert-item {
+			display: flex;
+			align-items: flex-start;
+			gap: 16rpx;
+			padding: 16rpx 0;
+			border-bottom: 1rpx solid #f3f4f6;
+		}
+
+		.alert-item:last-child {
+			border-bottom: none;
+		}
+
+		.alert-icon {
+			font-size: 32rpx;
+			margin-top: 4rpx;
+		}
+
+		.alert-content {
+			flex: 1;
+		}
+
+		.alert-title {
+			font-size: 28rpx;
+			color: #111827;
+			margin-bottom: 8rpx;
+			font-weight: 600;
+		}
+
+		.alert-time {
+			font-size: 24rpx;
+			color: #6b7280;
+		}
+
+		.alert-empty {
+			display: flex;
+			gap: 16rpx;
+			align-items: center;
+			padding: 24rpx 0;
+		}
+
+		.modal-footer {
+			padding: 24rpx;
+			border-top: 1rpx solid #e5e7eb;
+			display: flex;
+			justify-content: center;
+		}
+		</style>
