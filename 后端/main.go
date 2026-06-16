@@ -753,6 +753,76 @@ func GetSessionSignIns(db *gorm.DB, c *gin.Context) {
 	successResponse(c, gin.H{"sign_ins": signIns})
 }
 
+// DeleteSignIn 删除签到记录
+func DeleteSignIn(db *gorm.DB, c *gin.Context) {
+	v, ok := c.Get("authClaims")
+	if !ok {
+		errorResponse(c, http.StatusUnauthorized, "未登录")
+		return
+	}
+	claims := v.(AuthClaims)
+
+	sessionIDStr := c.Param("sessionId")
+	signInIDStr := c.Param("signId")
+
+	sessionID64, _ := strconv.ParseUint(strings.TrimSpace(sessionIDStr), 10, 64)
+	sessionID := uint(sessionID64)
+	signInID64, _ := strconv.ParseUint(strings.TrimSpace(signInIDStr), 10, 64)
+	signInID := uint(signInID64)
+
+	if sessionID == 0 || signInID == 0 {
+		errorResponse(c, http.StatusBadRequest, "无效的参数")
+		return
+	}
+
+	// 查找 Session → 获得 CourseID
+	var session SignSession
+	if err := db.First(&session, sessionID).Error; err != nil {
+		errorResponse(c, http.StatusNotFound, "签到场次不存在")
+		return
+	}
+
+	// 查找 Course → 获得 UserID
+	var course Course
+	if err := db.First(&course, session.CourseID).Error; err != nil {
+		errorResponse(c, http.StatusNotFound, "课程不存在")
+		return
+	}
+
+	// 权限校验：课程创建者 或 组织管理员
+	isOwner := course.UserID == claims.UserID
+	isAdmin := claims.Role == "org_owner"
+	if !isOwner && !isAdmin {
+		errorResponse(c, http.StatusForbidden, "无权限删除此签到记录")
+		return
+	}
+
+	// 查找签到记录
+	var signIn SignIn
+	if err := db.Where("id = ? AND session_id = ?", signInID, sessionID).First(&signIn).Error; err != nil {
+		errorResponse(c, http.StatusNotFound, "签到记录不存在")
+		return
+	}
+
+	// 删除签到记录
+	if err := db.Delete(&signIn).Error; err != nil {
+		log.Printf("删除签到记录失败: %v", err)
+		errorResponse(c, http.StatusInternalServerError, "删除失败")
+		return
+	}
+
+	// 级联删除关联的异常告警（同一场次、同一学生）
+	db.Where("session_id = ? AND student_id = ?", sessionID, signIn.StudentID).Delete(&SignAnomalyAlert{})
+
+	// 清理 Redis 缓存
+	if redisClient != nil && sessionID > 0 {
+		key := cacheKeySessionSignIns(sessionID)
+		_ = redisClient.Del(c.Request.Context(), key).Err()
+	}
+
+	successResponse(c, gin.H{"message": "删除成功"})
+}
+
 // medianFloat64 计算浮点数切片的中位数，过滤 NaN 和 Inf
 func medianFloat64(v []float64) float64 {
 	if len(v) == 0 {
@@ -4354,6 +4424,46 @@ func GetAllRoomIDs(db *gorm.DB, c *gin.Context) {
 	successResponse(c, responseData)
 }
 
+// DeleteRoom 删除房间
+func DeleteRoom(db *gorm.DB, c *gin.Context) {
+	v, ok := c.Get("authClaims")
+	if !ok {
+		errorResponse(c, http.StatusUnauthorized, "未登录")
+		return
+	}
+	claims := v.(AuthClaims)
+	if claims.OrgID == nil {
+		errorResponse(c, http.StatusForbidden, "未加入组织")
+		return
+	}
+
+	roomID := c.Query("room_id")
+	if roomID == "" {
+		errorResponse(c, http.StatusBadRequest, "缺少必要参数: room_id")
+		return
+	}
+
+	var room Room
+	result := db.Where("room_id = ? AND org_id = ?", roomID, *claims.OrgID).First(&room)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			errorResponse(c, http.StatusNotFound, "未找到该房间信息")
+		} else {
+			log.Printf("查询房间失败: %v", result.Error)
+			errorResponse(c, http.StatusInternalServerError, "查询房间失败")
+		}
+		return
+	}
+
+	if err := db.Delete(&room).Error; err != nil {
+		log.Printf("删除房间失败: %v", err)
+		errorResponse(c, http.StatusInternalServerError, "删除失败")
+		return
+	}
+
+	successResponse(c, gin.H{"message": "房间删除成功"})
+}
+
 // sanitizeZipEntryName 处理相关逻辑
 func sanitizeZipEntryName(s string) string {
 	s = strings.TrimSpace(s)
@@ -5746,6 +5856,7 @@ func main() {
 	auth.GET("/rooms", func(c *gin.Context) { GetAllRoomIDs(db, c) })
 	auth.POST("/room", func(c *gin.Context) { PostRoom(db, c) })
 	auth.GET("/room/qrcodes", func(c *gin.Context) { ExportRoomSeatQRCodesZip(db, c) })
+	auth.DELETE("/room", func(c *gin.Context) { DeleteRoom(db, c) })
 
 	// Course endpoints
 	auth.GET("/courses", func(c *gin.Context) { ListCourses(db, c) })
@@ -5775,6 +5886,7 @@ func main() {
 	auth.POST("/sessions/:id/end", func(c *gin.Context) { EndSignSession(db, c) })
 	auth.GET("/sessions/active", func(c *gin.Context) { GetActiveSession(db, c) })
 	auth.GET("/sessions/:id/signins", func(c *gin.Context) { GetSessionSignIns(db, c) })
+	auth.DELETE("/sessions/:sessionId/signins/:signId", func(c *gin.Context) { DeleteSignIn(db, c) })
 	auth.GET("/sessions/:id/alerts", func(c *gin.Context) { GetSessionAlerts(db, c) })
 	auth.GET("/sessions/:id/leaves", func(c *gin.Context) { GetSessionLeaves(db, c) })
 	auth.PUT("/sessions/:id/leaves", func(c *gin.Context) { PutSessionLeaves(db, c) })
