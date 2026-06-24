@@ -1,0 +1,390 @@
+.sign-monitor-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #f5f5f5;
+}
+
+.monitor-header {
+  padding: 15px 20px;
+  background-color: #fff;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.course-select {
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  font-size: 14px;
+  min-width: 200px;
+}
+
+.location-badge {
+  font-size: 12px;
+  color: #666;
+  background-color: #eee;
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+.autopick-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #555;
+  user-select: none;
+}
+
+.autopick-hint {
+  font-size: 12px;
+  color: #999;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.session-select {
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  font-size: 14px;
+  min-width: 320px;
+  max-width: 520px;
+}
+
+@media (max-width: 980px) {
+  .course-select {
+    min-width: 180px;
+  }
+  .session-select {
+    min-width: 220px;
+    max-width: 100%;
+  }
+}
+
+.session-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.session-status button {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #ccc;
+}
+
+.session-status.active .status-dot {
+  background-color: #4caf50;
+  box-shadow: 0 0 5px #4caf50;
+}
+
+.btn-start {
+  padding: 6px 12px;
+  background-color: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.btn-start:hover {
+  background-color: #1976D2;
+}
+
+.btn-start:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.btn-stop {
+  padding: 6px 12px;
+  background-color: #f44336;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.btn-stop:hover {
+  background-color: #d32f2f;
+}
+
+.btn-refresh {
+  padding: 6px 10px;
+  background-color: #fff;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.btn-refresh:hover {
+  background-color: #f5f5f5;
+}
+
+.session-status.history .status-dot {
+  background-color: #9e9e9e;
+}
+
+.monitor-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background-color: #f0f0f0; /* Slightly darker to distinguish canvas */
+  margin: 10px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.canvas-controls {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background: white;
+  padding: 5px;
+  border-radius: 4px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.canvas-controls button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-controls button:hover {
+  background-color: #f5f5f5;
+}
+
+.empty-state {
+  color: #999;
+  font-size: 16px;
+}
+
+.monitor-footer {
+  height: 100px;
+  background-color: #fff;
+  border-top: 1px solid #ddd;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+}
+
+.seat-detail-panel {
+  display: flex;
+  gap: 40px;
+  width: 100%;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.detail-item label {
+  font-size: 12px;
+  color: #888;
+}
+
+.detail-item span, .detail-item strong {
+  font-size: 16px;
+  color: #333;
+}
+
+.status-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.status-tag.success {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-tag.pending {
+  background-color: #fafafa;
+  color: #999;
+}
+
+.status-tag.warn {
+  background-color: #fff9c4;
+  color: #6d4c41;
+}
+
+.status-tag.late {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.footer-hint {
+  color: #999;
+  font-style: italic;
+  width: 100%;
+  text-align: center;
+}
+
+.sm-modal-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+.sm-modal-content {
+  width: 1100px;
+  max-width: 96vw;
+  max-height: 90vh;
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.sm-modal-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sm-modal-header h3 {
+  margin: 0;
+}
+
+.sm-modal-body {
+  padding: 12px 16px;
+  overflow: auto;
+}
+
+.leave-table {
+  width: 100%;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.leave-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 180px 2fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  align-items: center;
+  font-size: 13px;
+}
+
+.leave-row:last-child {
+  border-bottom: none;
+}
+
+.leave-head {
+  background: #fafafa;
+  font-size: 12px;
+  color: #555;
+  font-weight: 600;
+}
+
+.leave-row input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.sm-modal-header input[type="date"] {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.sm-modal-header input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+.sm-modal-header input.date-empty {
+  color: transparent;
+}
+
+.sm-modal-header input.date-empty:focus {
+  color: #333;
+}
+
+.sm-modal-header input.date-empty::-webkit-datetime-edit,
+.sm-modal-header input.date-empty::-webkit-datetime-edit-text,
+.sm-modal-header input.date-empty::-webkit-datetime-edit-month-field,
+.sm-modal-header input.date-empty::-webkit-datetime-edit-day-field,
+.sm-modal-header input.date-empty::-webkit-datetime-edit-year-field {
+  color: transparent;
+}
+
+.sm-modal-header input.date-empty:focus::-webkit-datetime-edit,
+.sm-modal-header input.date-empty:focus::-webkit-datetime-edit-text,
+.sm-modal-header input.date-empty:focus::-webkit-datetime-edit-month-field,
+.sm-modal-header input.date-empty:focus::-webkit-datetime-edit-day-field,
+.sm-modal-header input.date-empty:focus::-webkit-datetime-edit-year-field {
+  color: #333;
+}
