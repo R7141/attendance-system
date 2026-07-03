@@ -1,669 +1,472 @@
 import { useState, useEffect } from 'react';
 import { apiFetch, API_BASE_URL, getAuthToken } from '../api';
-
-// 导入子组件
-import SeatDragSource from '../components/SeatDragSource';
 import CountSelector from '../components/CountSelector';
 import Canvas from '../components/Canvas';
 
-// ==================== 座位编辑页面 ====================
+const SEAT_SIZE = 60;
+const GAP = 20;
+const PADDING = 50;
+
+function computeGridPos(rows, cols) {
+  const rowY = [];
+  let y = PADDING;
+  for (let r = 0; r < rows; r++) { rowY[r] = y; y += SEAT_SIZE + GAP; }
+  const colX = [];
+  let x = PADDING;
+  for (let c = 0; c < cols; c++) { colX[c] = x; x += SEAT_SIZE + GAP; }
+  return { colX, rowY };
+}
+
+function findNearestGrid(px, py, colX, rowY) {
+  let nearestR = -1, nearestC = -1, minDist = Infinity;
+  for (let r = 0; r < rowY.length; r++) {
+    for (let c = 0; c < colX.length; c++) {
+      const cx = colX[c] + SEAT_SIZE / 2, cy = rowY[r] + SEAT_SIZE / 2;
+      const dist = Math.hypot(px - cx, py - cy);
+      if (dist < minDist) { minDist = dist; nearestR = r; nearestC = c; }
+    }
+  }
+  return minDist < SEAT_SIZE ? { row: nearestR, col: nearestC } : null;
+}
+
+function detectPattern(labels) {
+  const parsed = labels.map(label => {
+    const m = label.match(/^([^\d]*?)(\d+)$/);
+    return m ? { prefix: m[1], num: parseInt(m[2]), width: m[2].length } : null;
+  });
+  if (parsed.some(p => !p)) throw new Error('所有手动编号必须包含数字后缀');
+  const first = parsed[0];
+  if (parsed.some(p => p.prefix !== first.prefix)) throw new Error('编号前缀不一致');
+  if (parsed.some(p => p.width !== first.width)) throw new Error('编号位数不一致');
+  const sorted = [...parsed].sort((a, b) => a.num - b.num);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].num !== sorted[i - 1].num + 1) throw new Error('手动编号不连续，无法自动扩充');
+  }
+  return { prefix: first.prefix, width: first.width, maxNum: Math.max(...parsed.map(p => p.num)) };
+}
+
 function SeatEditPage() {
   const [seats, setSeats] = useState([]);
-  const [rowCount, setRowCount] = useState(3);
-  const [columnCount, setColumnCount] = useState(3);
+  const [roomRows, setRoomRows] = useState(8);
+  const [roomCols, setRoomCols] = useState(10);
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [roomNameInput, setRoomNameInput] = useState('');
   const [selectedRoom, setSelectedRoom] = useState('');
   const [roomList, setRoomList] = useState([]);
-  
-  // 画布大小设置
-  const [canvasWidth, setCanvasWidth] = useState(800);
-  const [canvasHeight, setCanvasHeight] = useState(600);
+  const [blockRows, setBlockRows] = useState(2);
+  const [blockCols, setBlockCols] = useState(2);
+  const [editingSeat, setEditingSeat] = useState(null);
+  const [editLabelInput, setEditLabelInput] = useState('');
+  const [placeRow, setPlaceRow] = useState(1);
+  const [placeCol, setPlaceCol] = useState(1);
 
-  // 自动生成座位参数
-  const [autoTotalSeats, setAutoTotalSeats] = useState(48);
-  const [autoColumns, setAutoColumns] = useState(8);
-  const [autoLayout, setAutoLayout] = useState('horizontal'); // 'horizontal' | 'vertical'
-  const [autoAlign, setAutoAlign] = useState('left'); // 'left' | 'center' | 'right'
+  // 位置编辑
+  const [editingPositionSeat, setEditingPositionSeat] = useState(null);
+  const [editRowInput, setEditRowInput] = useState('');
+  const [editColInput, setEditColInput] = useState('');
 
-  const SEAT_SIZE = 60;
-  const GAP = 20;
-  const TOTAL_SIZE = SEAT_SIZE + GAP;
-  const PADDING = 100;
+  // 网格变化时重新计算座位位置
+  useEffect(() => {
+    const { colX, rowY } = computeGridPos(roomRows, roomCols);
+    setSeats(prev => prev.map(s =>
+      s.gridRow != null && s.gridCol != null && s.gridRow < roomRows && s.gridCol < roomCols
+        ? { ...s, x: colX[s.gridCol] ?? s.x, y: rowY[s.gridRow] ?? s.y }
+        : s
+    ).filter(s => s.gridRow == null || s.gridCol == null || (s.gridRow < roomRows && s.gridCol < roomCols)));
+  }, [roomRows, roomCols]);
 
-  // 自动生成座位
-  const handleAutoGenerate = () => {
-    const total = parseInt(autoTotalSeats, 10);
-    const cols = parseInt(autoColumns, 10);
-    if (!total || total < 1) { alert('请输入有效的总座位数'); return; }
-    if (!cols || cols < 1) { alert('请输入有效的列数'); return; }
-    
-    if (seats.length > 0 && !window.confirm('将清空现有座位，是否继续？')) return;
+  const getSeatExportData = (seats) => {
+    return seats
+      .filter(s => !s.isOccupied && !s.isAisle && s.gridRow != null && s.gridCol != null)
+      .map(seat => ({
+        seatNumber: seat.label || (seat.seatNumber ? `${seat.seatNumber.row}${seat.seatNumber.col}` : ''),
+        x: seat.gridCol,
+        y: seat.gridRow,
+      }));
+  };
 
-    const fullRows = Math.floor(total / cols);
-    const partialSeats = total % cols;
-    const rows = partialSeats > 0 ? fullRows + 1 : fullRows;
-    const baseTime = Date.now();
-    const generated = [];
-
-    const getAlignOffset = (count, max, align) => {
-      if (align === 'center') return (max - count) / 2;
-      if (align === 'right') return max - count;
-      return 0;
-    };
-
-    if (autoLayout === 'horizontal') {
-      for (let r = 0; r < rows; r++) {
-        const isLastRow = r === rows - 1 && partialSeats > 0;
-        const seatsInRow = isLastRow ? partialSeats : cols;
-        const offset = isLastRow ? getAlignOffset(partialSeats, cols, autoAlign) : 0;
-
-        for (let c = 0; c < seatsInRow; c++) {
-          generated.push({
-            id: `${baseTime}-auto-h-${r}-${c}`,
-            x: (c + offset) * TOTAL_SIZE + PADDING,
-            y: r * TOTAL_SIZE + PADDING,
-            seatNumber: String.fromCharCode(65 + c) + (rows - r),
-            selected: false,
-          });
+  // 放置座位块
+  const handlePlaceBlock = (startR, startC) => {
+    for (let r = startR; r < startR + blockRows; r++) {
+      for (let c = startC; c < startC + blockCols; c++) {
+        if (r < 0 || r >= roomRows || c < 0 || c >= roomCols) {
+          alert('超出画布范围，请重新选择位置');
+          return;
         }
-      }
-    } else {
-      for (let c = 0; c < cols; c++) {
-        const isLastCol = c === cols - 1 && partialSeats > 0;
-        const seatsInCol = isLastCol ? partialSeats : rows;
-        const offset = isLastCol ? getAlignOffset(partialSeats, rows, autoAlign) : 0;
-
-        for (let r = 0; r < seatsInCol; r++) {
-          generated.push({
-            id: `${baseTime}-auto-v-${c}-${r}`,
-            x: c * TOTAL_SIZE + PADDING,
-            y: (r + offset) * TOTAL_SIZE + PADDING,
-            seatNumber: String.fromCharCode(65 + r) + (c + 1),
-            selected: false,
-          });
+        if (seats.find(s => s.gridRow === r && s.gridCol === c)) {
+          alert('块内部分位置已被占用，请重新选择位置');
+          return;
         }
       }
     }
 
-    setSeats(generated);
-
-    // 自动调整画布大小
-    const neededWidth = cols * TOTAL_SIZE + PADDING * 2;
-    const neededHeight = rows * TOTAL_SIZE + PADDING * 2;
-    setCanvasWidth(Math.max(800, neededWidth));
-    setCanvasHeight(Math.max(600, neededHeight));
+    const { colX, rowY } = computeGridPos(roomRows, roomCols);
+    const newSeats = [];
+    for (let r = startR; r < startR + blockRows; r++) {
+      for (let c = startC; c < startC + blockCols; c++) {
+        newSeats.push({
+          id: `seat-${Date.now()}-${r}-${c}-${Math.random()}`,
+          gridRow: r,
+          gridCol: c,
+          x: colX[c],
+          y: rowY[r],
+          selected: true,
+          isOccupied: false,
+          isAisle: false,
+          label: null,
+          seatNumber: null,
+        });
+      }
+    }
+    setSeats(prev => [...prev.map(s => ({ ...s, selected: false })), ...newSeats]);
   };
 
-  const autoRows = (() => {
-    const t = parseInt(autoTotalSeats, 10);
-    const c = parseInt(autoColumns, 10);
-    if (!t || !c) return 0;
-    const full = Math.floor(t / c);
-    return t % c > 0 ? full + 1 : full;
-  })();
-
-  const handleAddSeat = (newSeat) => {
-    setSeats((prev) => [...prev, newSeat]);
+  // 点击网格
+  const handleCellClick = (r, c) => {
+    const existing = seats.find(s => s.gridRow === r && s.gridCol === c);
+    if (existing) {
+      setSeats(prev => prev.map(s =>
+        s.id === existing.id ? { ...s, selected: !s.selected } : { ...s, selected: false }
+      ));
+    } else {
+      handlePlaceBlock(r, c);
+    }
   };
 
-  const handleSeatClick = (clickedSeat) => {
-    setSeats((prev) =>
-      prev.map((seat) =>
-        seat.id === clickedSeat.id
-          ? { ...seat, selected: !seat.selected }
-          : { ...seat, selected: false }
-      )
+  const handleSeatClick = (clickedSeat, e) => {
+    if (e && e.ctrlKey) {
+      setSeats(prev => prev.map(s =>
+        s.id === clickedSeat.id ? { ...s, selected: !s.selected } : s
+      ));
+    } else {
+      setSeats(prev => prev.map(s =>
+        s.id === clickedSeat.id ? { ...s, selected: !s.selected } : { ...s, selected: false }
+      ));
+    }
+  };
+
+  // 拖拽吸附（含交换）
+  const handleSnapSeat = (positions) => {
+    const { colX, rowY } = computeGridPos(roomRows, roomCols);
+    setSeats(prev => {
+      const arr = [...prev];
+      for (const pos of positions) {
+        const nearest = findNearestGrid(pos.targetX, pos.targetY, colX, rowY);
+        if (!nearest) continue;
+        const srcIdx = arr.findIndex(s => s.id === pos.id);
+        if (srcIdx < 0) continue;
+        const srcRow = arr[srcIdx].gridRow, srcCol = arr[srcIdx].gridCol;
+
+        const tgtIdx = arr.findIndex(s => s.id !== pos.id && s.gridRow === nearest.row && s.gridCol === nearest.col);
+        if (tgtIdx >= 0) {
+          arr[tgtIdx] = { ...arr[tgtIdx], gridRow: srcRow, gridCol: srcCol, x: colX[srcCol] ?? arr[tgtIdx].x, y: rowY[srcRow] ?? arr[tgtIdx].y };
+        }
+        arr[srcIdx] = { ...arr[srcIdx], gridRow: nearest.row, gridCol: nearest.col, x: colX[nearest.col], y: rowY[nearest.row] };
+      }
+      return arr;
+    });
+  };
+
+  // 编辑编号
+  const handleEditLabel = (seat) => {
+    setEditingSeat(seat);
+    setEditLabelInput(seat.label || '');
+  };
+
+  const handleSaveLabel = () => {
+    setSeats(prev => prev.map(s =>
+      s.id === editingSeat.id ? { ...s, label: editLabelInput.trim() || null } : s
+    ));
+    setEditingSeat(null);
+  };
+
+  const handleCancelLabel = () => setEditingSeat(null);
+
+  // 自动编号
+  const handleAutoNumber = (mode) => {
+    const validSeats = seats.filter(s => !s.isOccupied && !s.isAisle && s.gridRow != null && s.gridCol != null);
+    if (validSeats.length === 0) { alert('没有可编号的座位'); return; }
+
+    const labeled = validSeats.filter(s => s.label);
+    const unlabeled = validSeats.filter(s => !s.label);
+    if (unlabeled.length === 0) { alert('所有座位已编号，无需补充'); return; }
+
+    let nextNum = 1, prefix = 'A', width = 0;
+    if (labeled.length > 0) {
+      try {
+        const pattern = detectPattern(labeled.map(s => s.label));
+        prefix = pattern.prefix; width = pattern.width; nextNum = pattern.maxNum + 1;
+      } catch (e) { alert(e.message); return; }
+    }
+
+    const sorted = [...validSeats].sort((a, b) =>
+      mode === 'horizontal'
+        ? (a.gridRow - b.gridRow || a.gridCol - b.gridCol)
+        : (a.gridCol - b.gridCol || a.gridRow - b.gridRow)
     );
+
+    const labeledIds = new Set(labeled.map(s => s.id));
+
+    setSeats(prev => {
+      const arr = [...prev];
+      let counter = nextNum;
+      for (const s of sorted) {
+        if (labeledIds.has(s.id)) continue;
+        const idx = arr.findIndex(x => x.id === s.id);
+        if (idx < 0) continue;
+        const padded = width > 0 ? String(counter).padStart(width, '0') : String(counter);
+        arr[idx] = { ...arr[idx], label: prefix + padded };
+        counter++;
+      }
+      return arr;
+    });
+
+    alert(`编号完成，已补充 ${unlabeled.length} 个座位`);
+  };
+
+  // 状态切换
+  const handleToggleOccupied = () => {
+    if (!seats.some(s => s.selected)) { alert('请先选中座位'); return; }
+    setSeats(prev => prev.map(s =>
+      s.selected ? { ...s, isOccupied: !s.isOccupied, isAisle: false } : s
+    ));
+  };
+
+  const handleToggleAisle = () => {
+    if (!seats.some(s => s.selected)) { alert('请先选中座位'); return; }
+    setSeats(prev => prev.map(s =>
+      s.selected ? { ...s, isAisle: !s.isAisle, isOccupied: false } : s
+    ));
+  };
+
+  const handleRestore = () => {
+    if (!seats.some(s => s.selected)) { alert('请先选中座位'); return; }
+    setSeats(prev => prev.map(s =>
+      s.selected ? { ...s, isOccupied: false, isAisle: false } : s
+    ));
   };
 
   const handleDeleteSelected = () => {
-    setSeats((prev) => prev.filter((seat) => !seat.selected));
+    setSeats(prev => prev.filter(s => !s.selected));
   };
 
   const handleClearAll = () => {
-    if (window.confirm('确定要清空所有座位吗？')) setSeats([]);
+    if (window.confirm('确定要清空所有座位吗？')) {
+      setSeats([]);
+    }
   };
 
-  // 获取房间列表
+  // 清空编号
+  const handleClearLabel = () => {
+    if (!seats.some(s => s.selected)) { alert('请先选中座位'); return; }
+    setSeats(prev => prev.map(s =>
+      s.selected ? { ...s, label: null } : s
+    ));
+  };
+
+  // 添加座位（在指定位置放置块）
+  const handlePlaceSeatAt = () => {
+    const startR = placeRow - 1;
+    const startC = placeCol - 1;
+    if (startR < 0 || startR >= roomRows || startC < 0 || startC >= roomCols) {
+      alert('超出画布范围，请重新输入行列');
+      return;
+    }
+    handlePlaceBlock(startR, startC);
+  };
+
+  // 编辑位置
+  const handleEditPosition = () => {
+    const sel = seats.find(s => s.selected);
+    if (!sel) { alert('请先选中一个座位'); return; }
+    setEditingPositionSeat(sel);
+    setEditRowInput(String(sel.gridRow + 1));
+    setEditColInput(String(sel.gridCol + 1));
+  };
+
+  const handleSavePosition = () => {
+    const newRow = parseInt(editRowInput, 10) - 1;
+    const newCol = parseInt(editColInput, 10) - 1;
+    if (isNaN(newRow) || isNaN(newCol) || newRow < 0 || newRow >= roomRows || newCol < 0 || newCol >= roomCols) {
+      alert('行列超出画布范围');
+      return;
+    }
+    const conflict = seats.find(s => s.id !== editingPositionSeat.id && s.gridRow === newRow && s.gridCol === newCol);
+    if (conflict) {
+      alert('该位置已被占用');
+      return;
+    }
+    const { colX, rowY } = computeGridPos(roomRows, roomCols);
+    setSeats(prev => prev.map(s =>
+      s.id === editingPositionSeat.id ? { ...s, gridRow: newRow, gridCol: newCol, x: colX[newCol], y: rowY[newRow] } : s
+    ));
+    setEditingPositionSeat(null);
+  };
+
+  const handleCancelPosition = () => setEditingPositionSeat(null);
+
+  // 房间操作
   const fetchRoomList = async () => {
     try {
       const data = await apiFetch('/rooms');
       let formattedRooms = [];
       if (data && Array.isArray(data.rooms)) {
-        formattedRooms = data.rooms
-          .map((room) => ({ id: room?.room_id, name: `${room?.room_id || ''}` }))
-          .filter((r) => r.id);
+        formattedRooms = data.rooms.map(r => ({ id: r?.room_id, name: `${r?.room_id || ''}` })).filter(r => r.id);
       } else if (data && Array.isArray(data.room_ids)) {
-        formattedRooms = data.room_ids
-          .map((roomId) => ({ id: roomId, name: `${roomId}` }))
-          .filter((r) => r.id);
+        formattedRooms = data.room_ids.map(id => ({ id, name: `${id}` })).filter(r => r.id);
       }
       setRoomList(formattedRooms);
-    } catch (error) {
-      console.error('获取房间列表失败:', error);
-    }
+    } catch (error) { console.error('获取房间列表失败:', error); }
   };
 
-  // 组件挂载时获取房间列表
-  useEffect(() => {
-    fetchRoomList();
-  }, []);
+  useEffect(() => { fetchRoomList(); }, []);
 
-  // 导入座位
-  const handleImportSeats = async (room)=>{
-    var roomId;
-    if (!room) {
-        roomId = selectedRoom;
-    }else{
-      roomId = room;
-    }
-      if (!roomId) {
-        alert('请先选择房间');
-        return;
-      }
-      
-      try {
-        const data = await apiFetch(`/roomseat?room_id=${encodeURIComponent(roomId)}`);
-        console.log('读取结果:', data);
-        
-        if (data && data.seat_pos) {
-          const SEAT_SIZE = 60;
-          const GAP = 20;
-          const TOTAL_SIZE = SEAT_SIZE + GAP;
-          
-          // data.seat_pos 可能已经是对象，也可能是 JSON 字符串
-          // apiFetch 会尝试解析 JSON，所以这里直接用
-          const seatPosObj = typeof data.seat_pos === 'string' ? JSON.parse(data.seat_pos) : data.seat_pos;
-          
-          if (seatPosObj && Array.isArray(seatPosObj.seats)) {
-            const Seats = seatPosObj.seats;
-            const minX = Math.min(...Seats.map(seat => seat.x));
-            const minY = Math.min(...Seats.map(seat => seat.y));
-            
-            const convertedSeats = Seats.map((seat, index) => ({
-              id: `imported-seat-${index}-${Date.now()}`,
-              x: seat.x * TOTAL_SIZE + 100,
-              y: seat.y * TOTAL_SIZE + 100,
-              seatNumber: seat.seatNumber || undefined,
-              selected: false
-            }));
-            
-            setSeats(convertedSeats);
-            alert(`成功导入 ${convertedSeats.length} 个座位`);
-          }
-        } else {
-          setSeats([]);
-        }
-      } catch (error) {
-        console.error('读取失败:', error);
-        alert('读取失败: ' + error.message);
-      }
-  };
-
-  // 导出座位数据到控制台
-  const handleExportSeats = () => {
-    if (seats.length === 0) {
-      alert('当前画布上没有座位');
-      return;
-    }
-
-    // 计算座位的行列号，与Canvas组件中的逻辑一致
-    const minX = Math.min(...seats.map(seat => seat.x));
-    const minY = Math.min(...seats.map(seat => seat.y));
-    const maxX = Math.max(...seats.map(seat => seat.x));
-    const maxY = Math.max(...seats.map(seat => seat.y));
-    const SEAT_SIZE = 60;
-    const GAP = 20;
-    const TOTAL_SIZE = SEAT_SIZE + GAP;
-
-    // 准备座位数据，使用行列号作为seatNumber
-    const seatPos = {
-      seats: seats.map(seat => {
-        // 计算行列索引
-        const colIndex = Math.round((seat.x - minX) / TOTAL_SIZE);
-        const rowIndex = Math.round((maxY - seat.y) / TOTAL_SIZE);
-        
-        // 生成行列号
-        const row = String.fromCharCode(65 + colIndex); // A, B, C...
-        const col = rowIndex + 1; // 1, 2, 3...
-        
-        return {
-          seatNumber: `${row}${col}`, // 使用A1, B1等格式作为座位号
-          x: Math.round(seat.x / TOTAL_SIZE), // 转换为相对坐标
-          y: Math.round(seat.y / TOTAL_SIZE)
-        };
-      })
-    };
-
-    // 输出到控制台
-    console.log('座位数据:');
-    console.log(JSON.stringify(seatPos, null, 2));
-    alert('座位数据已输出到控制台');
-  };
-
-  const handleExportSeatQRCodesZip = async () => {
-    if (!selectedRoom) {
-      alert('请先选择房间');
-      return;
-    }
-
+  const handleImportSeats = async (room) => {
+    const roomId = room || selectedRoom;
+    if (!roomId) { alert('请先选择房间'); return; }
     try {
-      const token = getAuthToken();
-      if (!token) {
-        alert('未登录');
-        return;
-      }
-
-      const url = `${API_BASE_URL}/room/qrcodes?room_id=${encodeURIComponent(selectedRoom)}`;
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`
+      const data = await apiFetch(`/roomseat?room_id=${encodeURIComponent(roomId)}`);
+      if (data && data.seat_pos) {
+        const seatPosObj = typeof data.seat_pos === 'string' ? JSON.parse(data.seat_pos) : data.seat_pos;
+        if (seatPosObj && Array.isArray(seatPosObj.seats)) {
+          const imported = seatPosObj.seats;
+          const maxX = Math.max(...imported.map(s => s.x)) + 1;
+          const maxY = Math.max(...imported.map(s => s.y)) + 1;
+          const rows = Math.max(roomRows, maxY);
+          const cols = Math.max(roomCols, maxX);
+          if (rows !== roomRows) setRoomRows(rows);
+          if (cols !== roomCols) setRoomCols(cols);
+          const { colX, rowY } = computeGridPos(rows, cols);
+          const convertedSeats = imported.map((s, index) => ({
+            id: `seat-${Date.now()}-${index}`,
+            gridRow: s.y, gridCol: s.x,
+            x: colX[s.x] || 0, y: rowY[s.y] || 0,
+            selected: false, isOccupied: false, isAisle: false,
+            label: s.seatNumber || null, seatNumber: null,
+          }));
+          setSeats(convertedSeats);
+          alert(`成功导入 ${convertedSeats.length} 个座位`);
         }
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = '导出失败';
-        try {
-          const data = text ? JSON.parse(text) : null;
-          msg = data?.message || data?.Message || msg;
-        } catch {
-          msg = text || msg;
-        }
-        throw new Error(msg);
-      }
-
-      const blob = await res.blob();
-      const downloadUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `room_${selectedRoom}_qrcodes.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(downloadUrl);
-    } catch (error) {
-      console.error('导出二维码失败:', error);
-      alert('导出失败: ' + error.message);
-    }
+      } else { setSeats([]); }
+    } catch (error) { alert('读取失败: ' + error.message); }
   };
 
-  const seatToExportData = (seat) => {
-    const colIndex = Math.round((seat.x - PADDING) / TOTAL_SIZE);
-    const rowIndex = Math.round((seat.y - PADDING) / TOTAL_SIZE);
-    const row = String.fromCharCode(65 + colIndex);
-    const col = rowIndex + 1;
-    return {
-      seatNumber: seat.seatNumber || `${row}${col}`,
-      x: Math.round(seat.x / TOTAL_SIZE),
-      y: Math.round(seat.y / TOTAL_SIZE)
-    };
-  };
-
-  // 保存座位数据到后端
   const handleSaveToBackend = async () => {
-    if (!selectedRoom) {
-      alert('请先选择房间');
-      return;
-    }
-
-    const seatPos = {
-      seats: seats.map(seatToExportData)
-    };
-
+    if (!selectedRoom) { alert('请先选择房间'); return; }
+    const seatPos = { seats: getSeatExportData(seats) };
     try {
-      const result = await apiFetch('/room', {
-        method: 'POST',
-        body: JSON.stringify({
-          org_id: null,
-          room_id: selectedRoom,
-          seat_pos: seatPos,
-          bssid_list: ""
-        })
-      });
-
+      const result = await apiFetch('/room', { method: 'POST', body: JSON.stringify({ org_id: null, room_id: selectedRoom, seat_pos: seatPos, bssid_list: "" }) });
       alert(result.message || '保存成功');
       fetchRoomList();
-    } catch (error) {
-      console.error('保存座位数据失败:', error);
-      alert('保存失败: ' + error.message);
-    }
+    } catch (error) { alert('保存失败: ' + error.message); }
   };
 
-  // 创建房间
   const handleCreateRoom = async () => {
-    if (!roomNameInput.trim()) {
-      alert('请输入房间名称');
-      return;
-    }
-
-    const seatPos = {
-      seats: seats.map(seatToExportData)
-    };
-
+    if (!roomNameInput.trim()) { alert('请输入房间名称'); return; }
+    const seatPos = { seats: getSeatExportData(seats) };
     try {
-      const result = await apiFetch('/room', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: null,
-          org_id: null,
-          room_id: roomNameInput.trim(),
-          seat_pos: seatPos,
-          bssid_list: ""
-        })
-      });
-
+      const result = await apiFetch('/room', { method: 'POST', body: JSON.stringify({ id: null, org_id: null, room_id: roomNameInput.trim(), seat_pos: seatPos, bssid_list: "" }) });
       alert(result.message || '创建成功');
       setShowCreateRoomModal(false);
       setRoomNameInput('');
       fetchRoomList();
       setSelectedRoom(roomNameInput.trim());
-    } catch (error) {
-      console.error('创建房间失败:', error);
-      alert('创建失败: ' + error.message);
-    }
+    } catch (error) { alert('创建失败: ' + error.message); }
   };
 
-  // 删除房间
-  const handleDeleteRoom = async () => {
-    if (!selectedRoom) {
-      alert('请先选择房间');
-      return;
-    }
-    if (!window.confirm(`确定删除房间「${selectedRoom}」吗？该操作不可撤销。`)) return;
-
+  const handleExportSeatQRCodesZip = async () => {
+    if (!selectedRoom) { alert('请先选择房间'); return; }
     try {
-      const result = await apiFetch(`/room?room_id=${encodeURIComponent(selectedRoom)}`, {
-        method: 'DELETE'
-      });
-      alert(result.message || '删除成功');
-      setSelectedRoom('');
-      setSeats([]);
-      fetchRoomList();
-    } catch (error) {
-      console.error('删除房间失败:', error);
-      alert('删除失败: ' + error.message);
-    }
+      const token = getAuthToken();
+      if (!token) { alert('未登录'); return; }
+      const res = await fetch(`${API_BASE_URL}/room/qrcodes?room_id=${encodeURIComponent(selectedRoom)}`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error((await res.text()) || '导出失败');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `room_${selectedRoom}_qrcodes.zip`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (error) { alert('导出失败: ' + error.message); }
   };
 
   return (
     <div className="seat-edit-page">
-      <div className="content-header">
-        <h2>座位编辑</h2>
-      </div>
+      <div className="content-header"><h2>座位编辑</h2></div>
       <div className="app-content">
         <div className="toolbar">
-          <h3>拖拽元素</h3>
-
+          <h3>房间网格配置</h3>
           <div className="drag-sources">
-            <SeatDragSource type="SINGLE" />
+            <div className="seat-group">
+              <CountSelector value={roomRows} onChange={setRoomRows} label="房间行数" />
+            </div>
+            <div className="seat-group">
+              <CountSelector value={roomCols} onChange={setRoomCols} label="房间列数" />
+            </div>
 
             <div className="seat-group">
-              <CountSelector value={rowCount} onChange={setRowCount} label="一行座位数量" />
-              <SeatDragSource type="ROW" count={rowCount} />
+              <CountSelector value={blockRows} onChange={setBlockRows} label="块行数" />
             </div>
-
             <div className="seat-group">
-              <CountSelector value={columnCount} onChange={setColumnCount} label="一列座位数量" />
-              <SeatDragSource type="COLUMN" count={columnCount} />
+              <CountSelector value={blockCols} onChange={setBlockCols} label="块列数" />
             </div>
-            
-            {/* 画布大小设置 */}
-            <div className="seat-group" style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px', border: '1px solid #e9ecef' }}>
-              <h4 style={{ marginBottom: '15px', fontSize: '14px', color: '#495057', fontWeight: '600' }}>画布大小设置</h4>
-              <div style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <label style={{ minWidth: '100px', fontSize: '14px', color: '#6c757d', fontWeight: '500' }}>宽度: {canvasWidth}px</label>
-                <button 
-                  onClick={() => setCanvasWidth(Math.max(400, canvasWidth - 100))} 
-                  style={{ 
-                    width: '28px', 
-                    height: '28px', 
-                    border: '1px solid #ddd', 
-                    backgroundColor: 'white', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    fontSize: '16px', 
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
-                >-</button>
-                <button 
-                  onClick={() => setCanvasWidth(canvasWidth + 100)} 
-                  style={{ 
-                    width: '28px', 
-                    height: '28px', 
-                    border: '1px solid #ddd', 
-                    backgroundColor: 'white', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    fontSize: '16px', 
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
-                >+</button>
-                <input 
-                  type="number" 
-                  value={canvasWidth} 
-                  onChange={(e) => setCanvasWidth(Math.max(400, parseInt(e.target.value) || 400))} 
-                  style={{ 
-                    width: '100px', 
-                    padding: '6px', 
-                    border: '1px solid #ddd', 
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    transition: 'border-color 0.2s'
-                  }} 
-                  onFocus={(e) => e.target.style.borderColor = '#1976d2'}
-                  onBlur={(e) => e.target.style.borderColor = '#ddd'}
-                />
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <label style={{ minWidth: '100px', fontSize: '14px', color: '#6c757d', fontWeight: '500' }}>高度: {canvasHeight}px</label>
-                <button 
-                  onClick={() => setCanvasHeight(Math.max(400, canvasHeight - 100))} 
-                  style={{ 
-                    width: '28px', 
-                    height: '28px', 
-                    border: '1px solid #ddd', 
-                    backgroundColor: 'white', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    fontSize: '16px', 
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
-                >-</button>
-                <button 
-                  onClick={() => setCanvasHeight(canvasHeight + 100)} 
-                  style={{ 
-                    width: '28px', 
-                    height: '28px', 
-                    border: '1px solid #ddd', 
-                    backgroundColor: 'white', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    fontSize: '16px', 
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
-                >+</button>
-                <input 
-                  type="number" 
-                  value={canvasHeight} 
-                  onChange={(e) => setCanvasHeight(Math.max(400, parseInt(e.target.value) || 400))} 
-                  style={{ 
-                    width: '100px', 
-                    padding: '6px', 
-                    border: '1px solid #ddd', 
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    transition: 'border-color 0.2s'
-                  }} 
-                  onFocus={(e) => e.target.style.borderColor = '#1976d2'}
-                  onBlur={(e) => e.target.style.borderColor = '#ddd'}
-                />
-              </div>
-            </div>
+            <p style={{ fontSize: '12px', color: '#999', marginBottom: '10px' }}>
+              💡 鼠标移到画布预览座位块 | 单击空格放置块<br />
+              块中已有座位或超出边界会报错<br />
+              双击座位编辑编号 | Ctrl+点击多选 | 拖拽移动
+            </p>
+          </div>
 
-            {/* 自动生成座位 */}
-            <div className="seat-group" style={{ marginTop: '20px', padding: '15px', backgroundColor: '#e8f4fd', borderRadius: '8px', border: '1px solid #b3d8f0' }}>
-              <h4 style={{ marginBottom: '15px', fontSize: '14px', color: '#1976d2', fontWeight: '600' }}>自动生成座位</h4>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '4px' }}>总座位数</label>
-                <input
-                  type="number" min="1" max="200"
-                  value={autoTotalSeats}
-                  onChange={(e) => setAutoTotalSeats(Math.max(1, parseInt(e.target.value) || 1))}
-                  style={{ width: '100%', padding: '6px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }}
-                />
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '4px' }}>每行列数</label>
-                <input
-                  type="number" min="1" max="50"
-                  value={autoColumns}
-                  onChange={(e) => setAutoColumns(Math.max(1, Math.min(50, parseInt(e.target.value) || 1)))}
-                  style={{ width: '100%', padding: '6px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }}
-                />
-              </div>
-              <div style={{ marginBottom: '12px', fontSize: '13px', color: '#666' }}>
-                将生成 {autoRows} 行 × {autoColumns || '-'} 列，共 {autoTotalSeats} 个座位
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '6px' }}>排列方式</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <label
-                    onClick={() => setAutoLayout('horizontal')}
-                    style={{
-                      flex: 1, padding: '8px', textAlign: 'center', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', userSelect: 'none',
-                      backgroundColor: autoLayout === 'horizontal' ? '#1976d2' : '#f0f0f0',
-                      color: autoLayout === 'horizontal' ? '#fff' : '#333',
-                      border: autoLayout === 'horizontal' ? '1px solid #1976d2' : '1px solid #ddd',
-                    }}
-                  >
-                    <div style={{ fontWeight: '600', marginBottom: '2px' }}>横排</div>
-                    <div style={{ fontSize: '11px', opacity: '0.8' }}>A1 A2 A3…</div>
-                  </label>
-                  <label
-                    onClick={() => setAutoLayout('vertical')}
-                    style={{
-                      flex: 1, padding: '8px', textAlign: 'center', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', userSelect: 'none',
-                      backgroundColor: autoLayout === 'vertical' ? '#1976d2' : '#f0f0f0',
-                      color: autoLayout === 'vertical' ? '#fff' : '#333',
-                      border: autoLayout === 'vertical' ? '1px solid #1976d2' : '1px solid #ddd',
-                    }}
-                  >
-                    <div style={{ fontWeight: '600', marginBottom: '2px' }}>竖排</div>
-                    <div style={{ fontSize: '11px', opacity: '0.8' }}>A1 B1 C1…</div>
-                  </label>
-                </div>
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '6px' }}>末尾行/列对齐</label>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {[
-                    { key: 'left', label: '左对齐' },
-                    { key: 'center', label: '居中' },
-                    { key: 'right', label: '右对齐' },
-                  ].map(opt => (
-                    <label key={opt.key} onClick={() => setAutoAlign(opt.key)}
-                      style={{
-                        flex: 1, padding: '6px 4px', textAlign: 'center', cursor: 'pointer', borderRadius: '6px', fontSize: '12px', userSelect: 'none',
-                        backgroundColor: autoAlign === opt.key ? '#1976d2' : '#f0f0f0',
-                        color: autoAlign === opt.key ? '#fff' : '#333',
-                        border: autoAlign === opt.key ? '1px solid #1976d2' : '1px solid #ddd',
-                      }}
-                    >{opt.label}</label>
-                  ))}
-                </div>
-              </div>
-              <button
-                onClick={handleAutoGenerate}
-                style={{
-                  width: '100%', padding: '8px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '6px',
-                  fontSize: '14px', fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.2s'
-                }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#1565c0'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = '#1976d2'}
-              >生成座位</button>
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ fontSize: '14px', marginBottom: '8px', color: '#666' }}>编号操作</h4>
+            <button onClick={() => handleAutoNumber('horizontal')} style={btnStyle('#ff9800')}>横向编号</button>
+            <button onClick={() => handleAutoNumber('vertical')} style={btnStyle('#ff9800')}>纵向编号</button>
+            <button onClick={() => {
+              const sel = seats.find(s => s.selected);
+              if (!sel) { alert('请先选中一个座位'); return; }
+              handleEditLabel(sel);
+            }} style={btnStyle('#9c27b0')}>编辑编号</button>
+            <button onClick={handleClearLabel} style={btnStyle('#f44336')}>清空编号</button>
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ fontSize: '14px', marginBottom: '8px', color: '#666' }}>座位位置编辑</h4>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+              <input type="number" min="1" max={roomRows} value={placeRow}
+                onChange={e => setPlaceRow(Math.max(1, Math.min(roomRows, Number(e.target.value))))}
+                style={{ width: '50px', padding: '6px', border: '1px solid #ddd', borderRadius: '4px', textAlign: 'center' }}
+                placeholder="行" />
+              <span style={{ lineHeight: '32px', color: '#999' }}>行</span>
+              <input type="number" min="1" max={roomCols} value={placeCol}
+                onChange={e => setPlaceCol(Math.max(1, Math.min(roomCols, Number(e.target.value))))}
+                style={{ width: '50px', padding: '6px', border: '1px solid #ddd', borderRadius: '4px', textAlign: 'center' }}
+                placeholder="列" />
+              <span style={{ lineHeight: '32px', color: '#999' }}>列</span>
             </div>
+            <button onClick={handlePlaceSeatAt} style={btnStyle('#e91e63')}>添加座位</button>
+            <button onClick={handleEditPosition} style={btnStyle('#e91e63')}>编辑坐标</button>
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ fontSize: '14px', marginBottom: '8px', color: '#666' }}>状态编辑</h4>
+            <button onClick={handleToggleOccupied} style={btnStyle('#607d8b')}>被占用</button>
+            <button onClick={handleToggleAisle} style={btnStyle('#4caf50')}>设为走道</button>
+            <button onClick={handleRestore} style={btnStyle('#795548')}>恢复</button>
           </div>
 
           <div className="actions">
             <button onClick={handleDeleteSelected}>删除选中</button>
             <button onClick={handleClearAll}>清空画布</button>
           </div>
-          
+
           <div className="export-actions">
             <h4>数据库接口</h4>
             <div style={{ marginTop: '10px', marginBottom: '10px' }}>
               <label htmlFor="roomSelect">选择房间: </label>
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <select 
-                  id="roomSelect"
-                  value={selectedRoom}
-                  onChange={(e) => {
-                    setSelectedRoom(e.target.value);
-                    handleImportSeats(e.target.value);   
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '6px',
-                    marginTop: '5px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px'
-                  }}
-                >
-                  <option value="">请选择房间</option>
-                  {roomList.map(room => (
-                    <option key={room.id} value={room.id}>{room.name}</option>
-                  ))}
-                </select>
-                {selectedRoom && (
-                  <button
-                    onClick={handleDeleteRoom}
-                    title="删除当前房间"
-                    style={{
-                      marginTop: '5px',
-                      padding: '6px 10px',
-                      backgroundColor: '#e74c3c',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      whiteSpace: 'nowrap'
-                    }}
-                    onMouseEnter={(e) => e.target.style.backgroundColor = '#c0392b'}
-                    onMouseLeave={(e) => e.target.style.backgroundColor = '#e74c3c'}
-                  >删除</button>
-                )}
-              </div>
+              <select id="roomSelect" value={selectedRoom} onChange={(e) => { setSelectedRoom(e.target.value); handleImportSeats(e.target.value); }}
+                style={{ width: '100%', padding: '6px', marginTop: '5px', border: '1px solid #ddd', borderRadius: '4px' }}>
+                <option value="">请选择房间</option>
+                {roomList.map(room => (<option key={room.id} value={room.id}>{room.name}</option>))}
+              </select>
             </div>
-            {/* <button onClick={handleExportSeats} className="export-btn export-debug">控制台导出座位数据(调试)</button> */}
             <button onClick={handleExportSeatQRCodesZip} className="export-btn export-debug">导出座位二维码(压缩包)</button>
             <button onClick={handleSaveToBackend} className="export-btn save">保存到当前房间</button>
             <button onClick={() => setShowCreateRoomModal(true)} className="export-btn create">创建房间</button>
@@ -671,16 +474,78 @@ function SeatEditPage() {
         </div>
 
         <div className="canvas-container">
-          <Canvas 
-            seats={seats} 
-            onAddSeat={handleAddSeat} 
-            onSeatClick={handleSeatClick} 
-            width={canvasWidth} 
-            height={canvasHeight} 
+          <Canvas
+            seats={seats}
+            roomRows={roomRows}
+            roomCols={roomCols}
+            blockRows={blockRows}
+            blockCols={blockCols}
+            onCellClick={handleCellClick}
+            onSeatClick={handleSeatClick}
+            onSnapSeat={handleSnapSeat}
+            onEditLabel={handleEditLabel}
           />
         </div>
       </div>
-      
+
+      {/* 编辑编号悬浮窗 */}
+      {editingSeat && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: '320px' }}>
+            <h3>编辑编号</h3>
+            <p style={{ fontSize: '13px', color: '#999', marginBottom: '12px' }}>
+              座位 ({editingSeat.gridRow + 1}, {editingSeat.gridCol + 1})
+            </p>
+            <input
+              type="text"
+              value={editLabelInput}
+              onChange={e => setEditLabelInput(e.target.value)}
+              className="modal-input"
+              placeholder="输入编号（留空清除）"
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') handleSaveLabel(); if (e.key === 'Escape') handleCancelLabel(); }}
+            />
+            <div className="modal-actions">
+              <button onClick={handleCancelLabel} className="modal-btn cancel">取消</button>
+              <button onClick={handleSaveLabel} className="modal-btn create">确认</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑位置悬浮窗 */}
+      {editingPositionSeat && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: '320px' }}>
+            <h3>编辑坐标</h3>
+            <p style={{ fontSize: '13px', color: '#999', marginBottom: '12px' }}>
+              座位 ({editingPositionSeat.gridRow + 1}, {editingPositionSeat.gridCol + 1})
+            </p>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: '13px', color: '#666', display: 'block', marginBottom: '4px' }}>行</label>
+                <input type="number" min="1" max={roomRows} value={editRowInput}
+                  onChange={e => setEditRowInput(e.target.value)}
+                  className="modal-input"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleSavePosition(); if (e.key === 'Escape') handleCancelPosition(); }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: '13px', color: '#666', display: 'block', marginBottom: '4px' }}>列</label>
+                <input type="number" min="1" max={roomCols} value={editColInput}
+                  onChange={e => setEditColInput(e.target.value)}
+                  className="modal-input"
+                  onKeyDown={e => { if (e.key === 'Enter') handleSavePosition(); if (e.key === 'Escape') handleCancelPosition(); }} />
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button onClick={handleCancelPosition} className="modal-btn cancel">取消</button>
+              <button onClick={handleSavePosition} className="modal-btn create">确认</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 创建房间悬浮窗 */}
       {showCreateRoomModal && (
         <div className="modal-overlay">
@@ -688,31 +553,12 @@ function SeatEditPage() {
             <h3>创建新房间</h3>
             <div>
               <label htmlFor="roomName">房间名称:</label>
-              <input
-                id="roomName"
-                type="text"
-                value={roomNameInput}
-                onChange={(e) => setRoomNameInput(e.target.value)}
-                placeholder="请输入房间名称"
-                className="modal-input"
-              />
+              <input id="roomName" type="text" value={roomNameInput} onChange={e => setRoomNameInput(e.target.value)}
+                placeholder="请输入房间名称" className="modal-input" />
             </div>
             <div className="modal-actions">
-              <button 
-                onClick={() => {
-                  setShowCreateRoomModal(false);
-                  setRoomNameInput('');
-                }}
-                className="modal-btn cancel"
-              >
-                取消
-              </button>
-              <button 
-                onClick={handleCreateRoom}
-                className="modal-btn create"
-              >
-                创建
-              </button>
+              <button onClick={() => { setShowCreateRoomModal(false); setRoomNameInput(''); }} className="modal-btn cancel">取消</button>
+              <button onClick={handleCreateRoom} className="modal-btn create">创建</button>
             </div>
           </div>
         </div>
@@ -720,5 +566,11 @@ function SeatEditPage() {
     </div>
   );
 }
+
+const btnStyle = (bg) => ({
+  width: '100%', padding: '10px', backgroundColor: bg, color: 'white',
+  border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: '500',
+  marginBottom: '8px',
+});
 
 export default SeatEditPage;

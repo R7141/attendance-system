@@ -265,6 +265,45 @@ body {
   cursor: grabbing;
 }
 
+/* 组块配置区域 */
+.block-config {
+  margin-bottom: 20px;
+}
+
+.block-btn {
+  width: 100%;
+  padding: 10px;
+  background-color: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  margin-bottom: 10px;
+  transition: background-color 0.2s;
+}
+
+.block-btn:hover {
+  background-color: #1565c0;
+}
+
+.number-btn {
+  width: 100%;
+  padding: 10px;
+  background-color: #ff9800;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  margin-bottom: 10px;
+  transition: background-color 0.2s;
+}
+
+.number-btn:hover {
+  background-color: #f57c00;
+}
+
 /* 座位组样式 */
 .seat-group {
   margin-bottom: 20px;
@@ -447,6 +486,21 @@ body {
 .seat-over {
   background-color: #bbdefb;
   border-color: #1976d2;
+}
+
+/* 座位块预览 */
+.block-preview-occupied {
+  background-color: rgba(180, 180, 180, 0.5);
+  border: 2px solid #999;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.block-preview-empty {
+  background-color: rgba(25, 118, 210, 0.15);
+  border: 2px dashed #1976d2;
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 /* 统计页面样式 */

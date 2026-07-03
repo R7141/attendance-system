@@ -481,22 +481,6 @@ const SignMonitorPage = () => {
     }
   };
 
-  // --- 删除签到 ---
-
-  const handleDeleteSignIn = async () => {
-    if (!selectedSessionId || !selectedSeat) return;
-    const record = signIns.find(s => s.seat_label === selectedSeat);
-    if (!record) return;
-    if (!window.confirm(`确定删除座位 ${selectedSeat}（${record.student_name || record.student_id}）的签到记录吗？`)) return;
-    try {
-      await apiFetch(`/sessions/${selectedSessionId}/signins/${record.id}`, { method: 'DELETE' });
-      setSelectedSeat(null);
-      fetchSignIns(selectedSessionId);
-    } catch (e) {
-      alert('删除失败: ' + e.message);
-    }
-  };
-
   // --- Polling ---
 
   const fetchSignIns = useCallback(async (sessionId) => {
@@ -1224,17 +1208,6 @@ const SignMonitorPage = () => {
                 <label>请假原因</label>
                 <span>{seatInfo.leaveReason}</span>
               </div>
-            ) : null}
-            {seatInfo.status !== '未签到' && seatInfo.status !== '请假' ? (
-              <button
-                onClick={handleDeleteSignIn}
-                style={{
-                  width: '100%', marginTop: '12px', padding: '8px', backgroundColor: '#e74c3c', color: 'white',
-                  border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer'
-                }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#c0392b'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = '#e74c3c'}
-              >删除签到</button>
             ) : null}
           </div>
         ) : (
