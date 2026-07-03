@@ -424,7 +424,7 @@ func connectDB() (*gorm.DB, error) {
 	}
 
 	// 自动迁移多个模型
-	err = db.AutoMigrate(&Room{}, &User{}, &Organization{}, &Course{}, &CourseFixedSeat{}, &ClassRoster{}, &Semester{}, &SignSession{}, &SignIn{}, &SignLeave{}, &SignAnomalyAlert{}, &SignAbsenceAlert{}, &Student{})
+	err = db.AutoMigrate(&Room{}, &User{}, &Organization{}, &Course{}, &CourseFixedSeat{}, &ClassRoster{}, &Semester{}, &SignSession{}, &SignIn{}, &SignLeave{}, &SignAnomalyAlert{}, &SignAbsenceAlert{})
 	if err != nil {
 		return nil, err
 	}
@@ -2940,14 +2940,6 @@ func MembersImport(db *gorm.DB, c *gin.Context) {
 		out = append(out, member{Name: name, StudentID: sid})
 	}
 
-	// 自动创建学生账号
-	v, _ := c.Get("authClaims")
-	if authClaims, ok := v.(AuthClaims); ok {
-		for _, m := range out {
-			ensureStudentAccount(db, m.StudentID, m.Name, authClaims.OrgID)
-		}
-	}
-
 	successResponse(c, gin.H{"members": out})
 }
 
@@ -5051,17 +5043,6 @@ func CreateClassRoster(db *gorm.DB, c *gin.Context) {
 		return
 	}
 
-	// 自动创建学生账号
-	if members, ok := req.Members.([]interface{}); ok {
-		for _, m := range members {
-			if obj, ok := m.(map[string]interface{}); ok {
-				sid, _ := obj["studentId"].(string)
-				name, _ := obj["name"].(string)
-				ensureStudentAccount(db, sid, name, claims.OrgID)
-			}
-		}
-	}
-
 	successResponse(c, gin.H{
 		"id":      roster.ID,
 		"message": "创建成功",
@@ -5110,17 +5091,6 @@ func UpdateClassRoster(db *gorm.DB, c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, "更新失败")
 		return
 	}
-	// 自动创建学生账号
-	if members, ok := req.Members.([]interface{}); ok {
-		for _, m := range members {
-			if obj, ok := m.(map[string]interface{}); ok {
-				sid, _ := obj["studentId"].(string)
-				name, _ := obj["name"].(string)
-				ensureStudentAccount(db, sid, name, claims.OrgID)
-			}
-		}
-	}
-
 	successResponse(c, gin.H{"message": "更新成功"})
 }
 
@@ -5747,7 +5717,7 @@ func main() {
 	// 1. 配置 CORS 中间件
 	r.Use(cors.New(cors.Config{
 		// 允许的前端源（必须指定具体地址，开发环境用 localhost:5173）
-		AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:5175", "http://127.0.0.1:5175", "http://localhost:5176", "http://127.0.0.1:5176"},
+		AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"},
 		// 允许的请求方法（默认已包含 OPTIONS 预检请求，无需额外添加）
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		// 允许的请求头（如 Content-Type、Authorization 等）
@@ -5817,12 +5787,6 @@ func main() {
 	auth.GET("/attendance/sessions/:id/export", func(c *gin.Context) { AttendanceExportSession(db, c) })
 
 	fmt.Println("All routes registered successfully!")
-
-	// Student PWA endpoints
-	r.POST("/student/login", func(c *gin.Context) { PostStudentLogin(db, c) })
-	studentAuth := r.Group("/")
-	studentAuth.Use(studentAuthMiddleware())
-	studentAuth.GET("/student/me/profile", func(c *gin.Context) { GetStudentProfile(db, c) })
 
 	// Public/Student endpoints
 	r.POST("/wx/login", func(c *gin.Context) { WxLogin(db, c) })
@@ -5894,128 +5858,4 @@ func main() {
 	})
 
 	r.Run(":8080")
-}
-
-// ---- Student PWA 合并代码 ----
-
-// Student 学生账号表
-type Student struct {
-	StudentID    string    `gorm:"primaryKey;type:varchar(64)" json:"student_id"`
-	StudentName  string    `gorm:"not null;type:varchar(64)" json:"student_name"`
-	PasswordHash string    `gorm:"not null" json:"-"`
-	OrgID        *uint     `gorm:"index" json:"org_id,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-}
-
-// StudentClaims 学生 JWT 声明
-type StudentClaims struct {
-	StudentID   string `json:"sid"`
-	StudentName string `json:"sn"`
-	OrgID       *uint  `json:"oid,omitempty"`
-	Exp         int64  `json:"exp"`
-}
-
-// signStudentToken 签发学生 JWT
-func signStudentToken(claims StudentClaims) (string, error) {
-	b, err := json.Marshal(claims)
-	if err != nil { return "", err }
-	payload := base64.RawURLEncoding.EncodeToString(b)
-	sig := HmacSha256ToBase64(AuthSecretKey, payload)
-	sig = strings.TrimRight(sig, "=")
-	sig = strings.ReplaceAll(sig, "+", "-")
-	sig = strings.ReplaceAll(sig, "/", "_")
-	return payload + "." + sig, nil
-}
-
-// verifyStudentToken 验证学生 JWT
-func verifyStudentToken(token string) (*StudentClaims, bool) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 2 { return nil, false }
-	payload := parts[0]; sig := parts[1]
-	expected := HmacSha256ToBase64(AuthSecretKey, payload)
-	expected = strings.TrimRight(expected, "=")
-	expected = strings.ReplaceAll(expected, "+", "-")
-	expected = strings.ReplaceAll(expected, "/", "_")
-	if !hmac.Equal([]byte(sig), []byte(expected)) { return nil, false }
-	raw, err := base64.RawURLEncoding.DecodeString(payload)
-	if err != nil { return nil, false }
-	var claims StudentClaims
-	if err := json.Unmarshal(raw, &claims); err != nil { return nil, false }
-	if claims.Exp <= time.Now().Unix() { return nil, false }
-	if strings.TrimSpace(claims.StudentID) == "" { return nil, false }
-	return &claims, true
-}
-
-// studentAuthMiddleware 学生认证中间件
-func studentAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth := c.GetHeader("Authorization")
-		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-			errorResponse(c, http.StatusUnauthorized, "未登录"); c.Abort(); return
-		}
-		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		claims, ok := verifyStudentToken(token)
-		if !ok { errorResponse(c, http.StatusUnauthorized, "登录已失效"); c.Abort(); return }
-		c.Set("studentClaims", *claims); c.Next()
-	}
-}
-
-// PostStudentLogin 学生登录
-func PostStudentLogin(db *gorm.DB, c *gin.Context) {
-	var req struct {
-		StudentID string `json:"student_id"`
-		Password  string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil { errorResponse(c, http.StatusBadRequest, "无效的请求数据格式"); return }
-	req.StudentID = strings.TrimSpace(req.StudentID)
-	if req.StudentID == "" || req.Password == "" { errorResponse(c, http.StatusBadRequest, "学号和密码不能为空"); return }
-	var student Student
-	if err := db.Where("student_id = ?", req.StudentID).First(&student).Error; err != nil {
-		if err == gorm.ErrRecordNotFound { errorResponse(c, http.StatusUnauthorized, "学号或密码错误")
-		} else { errorResponse(c, http.StatusInternalServerError, "登录失败") }
-		return
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(student.PasswordHash), []byte(req.Password)); err != nil {
-		errorResponse(c, http.StatusUnauthorized, "学号或密码错误"); return
-	}
-	claims := StudentClaims{
-		StudentID: student.StudentID, StudentName: student.StudentName,
-		OrgID: student.OrgID, Exp: time.Now().Add(30 * 24 * time.Hour).Unix(),
-	}
-	token, err := signStudentToken(claims)
-	if err != nil { errorResponse(c, http.StatusInternalServerError, "生成登录凭证失败"); return }
-	successResponse(c, gin.H{"token": token, "student": gin.H{
-		"student_id": student.StudentID, "student_name": student.StudentName, "org_id": student.OrgID,
-	}})
-}
-
-// GetStudentProfile 获取学生个人信息
-func GetStudentProfile(db *gorm.DB, c *gin.Context) {
-	v, ok := c.Get("studentClaims")
-	if !ok { errorResponse(c, http.StatusUnauthorized, "未登录"); return }
-	claims := v.(StudentClaims)
-	var student Student
-	if err := db.First(&student, "student_id = ?", claims.StudentID).Error; err != nil { errorResponse(c, http.StatusNotFound, "学生不存在"); return }
-	successResponse(c, gin.H{"student_id": student.StudentID, "student_name": student.StudentName, "org_id": student.OrgID, "created_at": student.CreatedAt})
-}
-
-// ensureStudentAccount 确保学生账号存在（导入花名册时自动创建）
-func ensureStudentAccount(db *gorm.DB, studentID, studentName string, orgID *uint) {
-	studentID = strings.TrimSpace(studentID); studentName = strings.TrimSpace(studentName)
-	if studentID == "" { return }
-	var existing Student
-	if err := db.Where("student_id = ?", studentID).First(&existing).Error; err == nil {
-		updates := map[string]interface{}{}
-		if studentName != "" && existing.StudentName != studentName { updates["student_name"] = studentName }
-		if orgID != nil && (existing.OrgID == nil || *existing.OrgID != *orgID) { updates["org_id"] = *orgID }
-		if len(updates) > 0 { db.Model(&existing).Updates(updates) }
-		return
-	} else if err != gorm.ErrRecordNotFound {
-		log.Printf("查询学生账号失败: %v", err); return
-	}
-	hashBytes, err := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
-	if err != nil { log.Printf("生成密码哈希失败: %v", err); return }
-	if studentName == "" { studentName = studentID }
-	student := Student{StudentID: studentID, StudentName: studentName, PasswordHash: string(hashBytes), OrgID: orgID}
-	if err := db.Create(&student).Error; err != nil { log.Printf("创建学生账号失败: %v", err) }
 }
