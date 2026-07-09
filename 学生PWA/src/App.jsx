@@ -4,6 +4,8 @@ import { getStudentToken, clearStudentSession, apiFetch } from './api'
 import LoginPage from './pages/LoginPage'
 import ScanPage from './pages/ScanPage'
 import ResultPage from './pages/ResultPage'
+import ProfilePage from './pages/ProfilePage'
+import MainLayout from './components/MainLayout'
 import './App.css'
 
 function RequireAuth({ children }) {
@@ -27,7 +29,10 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/result" element={<RequireAuth><ResultPage /></RequireAuth>} />
-      <Route path="/" element={<RequireAuth><ScanPage /></RequireAuth>} />
+      <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
+        <Route path="/" element={<ScanPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+      </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

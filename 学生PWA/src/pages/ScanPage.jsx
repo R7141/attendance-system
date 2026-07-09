@@ -1,10 +1,9 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiFetch, getStudentInfo, clearStudentSession } from '../api'
+import { apiFetch, getStudentInfo, getStudentToken, clearStudentSession } from '../api'
 import CameraView from '../components/CameraView'
 
 export default function ScanPage() {
-  const info = getStudentInfo()
   const navigate = useNavigate()
   const [scanning, setScanning] = useState(true)
   const [preview, setPreview] = useState(null)
@@ -28,6 +27,7 @@ export default function ScanPage() {
     setLoading(true)
     setError('')
     try {
+      const info = getStudentInfo()
       const body = {
         student_id: info?.student_id || '',
         student_name: info?.student_name || '',
@@ -60,19 +60,10 @@ export default function ScanPage() {
     setScanning(true)
   }
 
-  const handleLogout = () => {
-    clearStudentSession()
-    navigate('/login', { replace: true })
-  }
-
   return (
     <div className="scan-page">
       <div className="scan-header">
         <h2>扫码签到</h2>
-        <span className="student-info">
-          {info?.student_name} ({info?.student_id})
-          <a className="logout-link" onClick={handleLogout}>退出</a>
-        </span>
       </div>
       <div className="camera-section">
         {scanning && <CameraView onScan={handleScan} enabled={scanning} />}
