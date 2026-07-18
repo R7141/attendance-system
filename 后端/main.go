@@ -107,6 +107,32 @@ func mustInitSecrets() {
 	}
 }
 
+var dbHost, dbPort, dbUser, dbPassword, dbName string
+
+func mustInitDBConfig() {
+	dbHost = os.Getenv("DB_HOST")
+	dbPort = os.Getenv("DB_PORT")
+	dbUser = os.Getenv("DB_USER")
+	dbPassword = os.Getenv("DB_PASSWORD")
+	dbName = os.Getenv("DB_NAME")
+
+	if dbHost == "" {
+		dbHost = "127.0.0.1"
+	}
+	if dbPort == "" {
+		dbPort = "3306"
+	}
+	if dbUser == "" {
+		dbUser = "root"
+	}
+	if dbPassword == "" {
+		dbPassword = "root"
+	}
+	if dbName == "" {
+		dbName = "sign_in_system"
+	}
+}
+
 // --- 数据结构 ---
 type QRcode struct {
 	Ver  string `json:"ver"`  // 版本号（可选）
@@ -336,15 +362,6 @@ type ClassRoster struct {
 	Name    string `gorm:"not null;type:varchar(191)" json:"name"`
 	Members string `gorm:"type:longtext" json:"-"` // JSON 存储成员列表
 }
-
-// 数据库连接信息
-const (
-	dbUser     = "root"
-	dbPassword = "root"
-	dbName     = "sign_in_system"
-	dbHost     = "127.0.0.1"
-	dbPort     = "3306"
-)
 
 type Room struct {
 	ID         int    `gorm:"primaryKey"`
@@ -5727,6 +5744,7 @@ func verifyQRcode(qr QRcode) (bool, error) {
 // --- 主函数 ---
 func main() {
 	mustInitSecrets()
+	mustInitDBConfig()
 	db, err := connectDB()
 	if err != nil {
 		panic(err.Error())
