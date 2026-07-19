@@ -5,6 +5,7 @@ import { apiFetch, setStudentToken, setStudentInfo } from '../api'
 export default function LoginPage() {
   const [sid, setSid] = useState('')
   const [pwd, setPwd] = useState('')
+  const [remember, setRemember] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -18,7 +19,7 @@ export default function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ student_id: sid.trim(), password: pwd }),
       })
-      setStudentToken(data.token)
+      setStudentToken(data.token, remember)
       setStudentInfo(data.student)
       navigate('/', { replace: true })
     } catch (err) {
@@ -46,6 +47,10 @@ export default function LoginPage() {
               value={pwd} onChange={e => setPwd(e.target.value)}
               autoComplete="current-password" />
           </div>
+          <label className="remember-row">
+            <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+            <span>七天免登录</span>
+          </label>
           {error && <div className="error-msg">{error}</div>}
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ marginTop: 12 }}>
             {loading ? '登录中...' : '登 录'}

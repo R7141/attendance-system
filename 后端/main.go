@@ -373,12 +373,12 @@ type Room struct {
 
 // SignSession 签到场次表
 type SignSession struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	CourseID  uint      `gorm:"index" json:"course_id"` // 关联课程
-	RoomID    string    `json:"room_id"`                // 关联教室
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"` // 可为空，表示未结束
-	IsActive  bool      `json:"is_active"`
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	CourseID  uint       `gorm:"index" json:"course_id"` // 关联课程
+	RoomID    string     `json:"room_id"`                // 关联教室
+	StartTime time.Time  `json:"start_time"`
+	EndTime   *time.Time `json:"end_time"` // 可为空，表示未结束
+	IsActive  bool       `json:"is_active"`
 }
 
 // SignIn 签到记录表结构
@@ -2014,16 +2014,16 @@ func AttendanceListSessions(db *gorm.DB, c *gin.Context) {
 	}
 
 	type row struct {
-		ID            uint      `gorm:"column:id"`
-		CourseID      uint      `gorm:"column:course_id"`
-		RoomID        string    `gorm:"column:room_id"`
-		StartTime     time.Time `gorm:"column:start_time"`
-		EndTime       time.Time `gorm:"column:end_time"`
-		IsActive      bool      `gorm:"column:is_active"`
-		CourseName    string    `gorm:"column:course_name"`
-		ClassRosterID string    `gorm:"column:class_roster_id"`
-		MemberMode    string    `gorm:"column:member_mode"`
-		Username      string    `gorm:"column:username"`
+		ID            uint       `gorm:"column:id"`
+		CourseID      uint       `gorm:"column:course_id"`
+		RoomID        string     `gorm:"column:room_id"`
+		StartTime     time.Time  `gorm:"column:start_time"`
+		EndTime       *time.Time `gorm:"column:end_time"`
+		IsActive      bool       `gorm:"column:is_active"`
+		CourseName    string     `gorm:"column:course_name"`
+		ClassRosterID string     `gorm:"column:class_roster_id"`
+		MemberMode    string     `gorm:"column:member_mode"`
+		Username      string     `gorm:"column:username"`
 	}
 
 	var rows []row
@@ -2129,17 +2129,17 @@ func AttendanceExportSessions(db *gorm.DB, c *gin.Context) {
 	}
 
 	type row struct {
-		ID            uint      `gorm:"column:id"`
-		CourseID      uint      `gorm:"column:course_id"`
-		RoomID        string    `gorm:"column:room_id"`
-		StartTime     time.Time `gorm:"column:start_time"`
-		EndTime       time.Time `gorm:"column:end_time"`
-		IsActive      bool      `gorm:"column:is_active"`
-		CourseName    string    `gorm:"column:course_name"`
-		ClassRosterID string    `gorm:"column:class_roster_id"`
-		MemberMode    string    `gorm:"column:member_mode"`
-		Members       string    `gorm:"column:members"`
-		Username      string    `gorm:"column:username"`
+		ID            uint       `gorm:"column:id"`
+		CourseID      uint       `gorm:"column:course_id"`
+		RoomID        string     `gorm:"column:room_id"`
+		StartTime     time.Time  `gorm:"column:start_time"`
+		EndTime       *time.Time `gorm:"column:end_time"`
+		IsActive      bool       `gorm:"column:is_active"`
+		CourseName    string     `gorm:"column:course_name"`
+		ClassRosterID string     `gorm:"column:class_roster_id"`
+		MemberMode    string     `gorm:"column:member_mode"`
+		Members       string     `gorm:"column:members"`
+		Username      string     `gorm:"column:username"`
 	}
 
 	var rows []row
@@ -2394,10 +2394,10 @@ func AttendanceExportSession(db *gorm.DB, c *gin.Context) {
 		CourseName    string    `gorm:"column:course_name"`
 		ClassRosterID string    `gorm:"column:class_roster_id"`
 		MemberMode    string    `gorm:"column:member_mode"`
-		Members       string    `gorm:"column:members"`
-		UserID        uint      `gorm:"column:user_id"`
-		OrgID         *uint     `gorm:"column:org_id"`
-		Username      string    `gorm:"column:username"`
+		Members       string     `gorm:"column:members"`
+		UserID        uint       `gorm:"column:user_id"`
+		OrgID         *uint      `gorm:"column:org_id"`
+		Username      string     `gorm:"column:username"`
 	}
 
 	var r row
@@ -2994,14 +2994,29 @@ func PostSignIn(db *gorm.DB, c *gin.Context) {
 		return
 	}
 
-	v, ok := c.Get("wxClaims")
-	wxClaims := WxClaims{}
-	if ok {
-		wxClaims = v.(WxClaims)
+	// Try student auth first, fall back to wx auth
+	openid := ""
+	authInvalid := true
+	auth := c.GetHeader("Authorization")
+	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
+		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		if claims, ok := verifyStudentToken(token); ok {
+			c.Set("studentClaims", *claims)
+			authInvalid = false
+		}
 	}
-	openid := strings.TrimSpace(wxClaims.OpenID)
-	wxAuthInvalid, _ := c.Get("wxAuthInvalid")
-	authInvalid := (openid == "") || (wxAuthInvalid == true)
+	if authInvalid {
+		v, ok := c.Get("wxClaims")
+		wxClaims := WxClaims{}
+		if ok {
+			wxClaims = v.(WxClaims)
+		}
+		openid = strings.TrimSpace(wxClaims.OpenID)
+		wxAuthInvalid, _ := c.Get("wxAuthInvalid")
+		authInvalid = (openid == "") || (wxAuthInvalid == true)
+	}
+
+
 
 	req.StudentID = strings.TrimSpace(req.StudentID)
 	req.StudentName = strings.TrimSpace(req.StudentName)
@@ -3107,14 +3122,12 @@ func PostSignIn(db *gorm.DB, c *gin.Context) {
 	// 如果签到场次已结束，需要检查是否在课程时间内
 	if !session.IsActive {
 		checkT := session.EndTime
-		if checkT.IsZero() {
-			checkT = session.StartTime
+		if checkT == nil {
+			checkT = &session.StartTime
 		}
-		if !checkT.IsZero() {
-			if checkT.Year() != now.Year() || checkT.Month() != now.Month() || checkT.Day() != now.Day() {
-				errorResponse(c, http.StatusBadRequest, "签到已结束")
-				return
-			}
+		if checkT.Year() != now.Year() || checkT.Month() != now.Month() || checkT.Day() != now.Day() {
+			errorResponse(c, http.StatusBadRequest, "签到已结束")
+			return
 		}
 
 		// 获取课程关联的学期，以获取时间槽信息
@@ -5765,7 +5778,7 @@ func main() {
 	// 1. 配置 CORS 中间件
 	r.Use(cors.New(cors.Config{
 		// 允许的前端源（必须指定具体地址，开发环境用 localhost:5173）
-		AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:5175", "http://127.0.0.1:5175", "http://localhost:5176", "http://127.0.0.1:5176"},
+		AllowOrigins: []string{"http://localhost", "http://127.0.0.1", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:5175", "http://127.0.0.1:5175", "http://localhost:5176", "http://127.0.0.1:5176", "http://localhost:81", "http://127.0.0.1:81"},
 		// 允许的请求方法（默认已包含 OPTIONS 预检请求，无需额外添加）
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		// 允许的请求头（如 Content-Type、Authorization 等）
@@ -5841,12 +5854,13 @@ func main() {
 	studentAuth := r.Group("/")
 	studentAuth.Use(studentAuthMiddleware())
 	studentAuth.GET("/student/me/profile", func(c *gin.Context) { GetStudentProfile(db, c) })
+	studentAuth.GET("/student/me/records", func(c *gin.Context) { GetStudentRecords(db, c) })
 
 	// Public/Student endpoints
 	r.POST("/wx/login", func(c *gin.Context) { WxLogin(db, c) })
 
 	// POST接口：学生发起签到
-	r.POST("/signin", wxAuthMiddleware(), func(c *gin.Context) { PostSignIn(db, c) })
+	r.POST("/signin", func(c *gin.Context) { PostSignIn(db, c) })
 
 	// GET接口：获取缺勤提醒
 	r.GET("/absences/alerts", wxAuthMiddleware(), func(c *gin.Context) { GetAbsenceAlertsByOpenID(db, c) })
@@ -6015,6 +6029,58 @@ func GetStudentProfile(db *gorm.DB, c *gin.Context) {
 	var student Student
 	if err := db.First(&student, "student_id = ?", claims.StudentID).Error; err != nil { errorResponse(c, http.StatusNotFound, "学生不存在"); return }
 	successResponse(c, gin.H{"student_id": student.StudentID, "student_name": student.StudentName, "org_id": student.OrgID, "created_at": student.CreatedAt})
+}
+
+type StudentRecord struct {
+	ID             uint      `json:"id"`
+	CourseName     string    `json:"course_name"`
+	CourseLocation string    `json:"course_location"`
+	RoomID         string    `json:"room_id"`
+	SeatLabel      string    `json:"seat_label"`
+	SignTime       time.Time `json:"sign_time"`
+	SessionStart   time.Time `json:"session_start"`
+	SessionEnd     time.Time `json:"session_end"`
+	Status         string    `json:"status"`
+	SignQuality    string    `json:"sign_quality"`
+	WarnReasons    string    `json:"warn_reasons"`
+}
+
+// GetStudentRecords 获取学生个人签到记录
+func GetStudentRecords(db *gorm.DB, c *gin.Context) {
+	v, ok := c.Get("studentClaims")
+	if !ok { errorResponse(c, http.StatusUnauthorized, "未登录"); return }
+	claims := v.(StudentClaims)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 { page = 1 }
+	if pageSize < 1 || pageSize > 100 { pageSize = 20 }
+
+	var total int64
+	query := db.Table("sign_ins").
+		Joins("JOIN sign_sessions ON sign_ins.session_id = sign_sessions.id").
+		Joins("JOIN courses ON sign_sessions.course_id = courses.id").
+		Where("sign_ins.student_id = ?", claims.StudentID)
+
+	query.Count(&total)
+
+	var records []StudentRecord
+	query.Select("sign_ins.id, courses.name as course_name, courses.location as course_location, sign_sessions.room_id, sign_ins.seat_label, sign_ins.time as sign_time, sign_sessions.start_time as session_start, sign_sessions.end_time as session_end, sign_ins.status, sign_ins.sign_quality, sign_ins.warn_reasons").
+		Order("sign_ins.time DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&records)
+
+	if records == nil {
+		records = []StudentRecord{}
+	}
+
+	successResponse(c, gin.H{
+		"records":   records,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 // ensureStudentAccount 确保学生账号存在（导入花名册时自动创建）

@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import ScanPage from './pages/ScanPage'
 import ResultPage from './pages/ResultPage'
 import ProfilePage from './pages/ProfilePage'
+import RecordsPage from './pages/RecordsPage'
 import MainLayout from './components/MainLayout'
 import './App.css'
 
@@ -32,6 +33,7 @@ export default function App() {
       <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
         <Route path="/" element={<ScanPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/records" element={<RecordsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

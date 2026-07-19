@@ -6,7 +6,9 @@
  * @FilePath: \sign_in_system_server\管理端\web_console\src\api.js
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8080';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL !== undefined
+    ? import.meta.env.VITE_API_BASE_URL
+    : 'http://127.0.0.1:8080';
 
 export function getAuthToken() {
   return localStorage.getItem('authToken') || '';
@@ -23,7 +25,11 @@ export function clearAuthSession() {
 }
 
 export async function apiFetch(path, options = {}) {
-  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
+  let url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
+  if (!options.method || options.method === 'GET') {
+    const sep = url.includes('?') ? '&' : '?';
+    url += `${sep}_t=${Date.now()}`;
+  }
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body != null) headers.set('Content-Type', 'application/json');
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');

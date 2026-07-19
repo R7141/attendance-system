@@ -1,24 +1,32 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || '';
 
-export function getStudentToken() {
-  return localStorage.getItem('studentToken') || '';
+function storage() {
+  return localStorage.getItem('studentRemember') === '1' ? localStorage : sessionStorage;
 }
-export function setStudentToken(token) {
-  localStorage.setItem('studentToken', token);
+
+export function getStudentToken() {
+  return storage().getItem('studentToken') || '';
+}
+export function setStudentToken(token, remember) {
+  localStorage.setItem('studentRemember', remember ? '1' : '0');
+  storage().setItem('studentToken', token);
 }
 export function clearStudentSession() {
   localStorage.removeItem('studentToken');
   localStorage.removeItem('studentInfo');
+  localStorage.removeItem('studentRemember');
+  sessionStorage.removeItem('studentToken');
+  sessionStorage.removeItem('studentInfo');
 }
 export function getStudentInfo() {
   try {
-    const raw = localStorage.getItem('studentInfo');
+    const raw = storage().getItem('studentInfo');
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
 export function setStudentInfo(info) {
-  localStorage.setItem('studentInfo', JSON.stringify(info));
+  storage().setItem('studentInfo', JSON.stringify(info));
 }
 
 export async function apiFetch(path, options = {}) {

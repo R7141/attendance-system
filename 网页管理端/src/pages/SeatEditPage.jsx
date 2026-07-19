@@ -358,6 +358,7 @@ function SeatEditPage() {
       const result = await apiFetch('/room', { method: 'POST', body: JSON.stringify({ org_id: null, room_id: selectedRoom, seat_pos: seatPos, bssid_list: "" }) });
       alert(result.message || '保存成功');
       fetchRoomList();
+      await handleImportSeats(selectedRoom);
     } catch (error) { alert('保存失败: ' + error.message); }
   };
 
@@ -365,12 +366,14 @@ function SeatEditPage() {
     if (!roomNameInput.trim()) { alert('请输入房间名称'); return; }
     const seatPos = { seats: getSeatExportData(seats) };
     try {
-      const result = await apiFetch('/room', { method: 'POST', body: JSON.stringify({ id: null, org_id: null, room_id: roomNameInput.trim(), seat_pos: seatPos, bssid_list: "" }) });
+      const roomId = roomNameInput.trim();
+      const result = await apiFetch('/room', { method: 'POST', body: JSON.stringify({ id: null, org_id: null, room_id: roomId, seat_pos: seatPos, bssid_list: "" }) });
       alert(result.message || '创建成功');
       setShowCreateRoomModal(false);
       setRoomNameInput('');
       fetchRoomList();
-      setSelectedRoom(roomNameInput.trim());
+      setSelectedRoom(roomId);
+      await handleImportSeats(roomId);
     } catch (error) { alert('创建失败: ' + error.message); }
   };
 

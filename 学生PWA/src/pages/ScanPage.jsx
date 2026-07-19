@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiFetch, getStudentInfo, getStudentToken, clearStudentSession } from '../api'
+import { apiFetch, getStudentInfo } from '../api'
 import CameraView from '../components/CameraView'
 
 export default function ScanPage() {
@@ -9,6 +9,21 @@ export default function ScanPage() {
   const [preview, setPreview] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const gpsCoords = useRef(null)
+  const gpsStatus = useRef('pending') // pending | ok | fail
+
+  useEffect(() => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        gpsCoords.current = pos.coords
+        gpsStatus.current = 'ok'
+      },
+      (err) => {
+        gpsStatus.current = 'fail'
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    )
+  }, [])
 
   const handleScan = useCallback((qrText) => {
     setScanning(false)
@@ -26,19 +41,34 @@ export default function ScanPage() {
     if (!preview) return
     setLoading(true)
     setError('')
+    const info = getStudentInfo()
+    const body = {
+      student_id: info?.student_id || '',
+      student_name: info?.student_name || '',
+      seat: preview.seat || '',
+      room: preview.room || '',
+      sig: preview.sig || '',
+      iat: preview.iat || '',
+      ttl: preview.ttl || '',
+      ver: preview.ver || '',
+      confirm_abnormal: false,
+    }
+    let coords = gpsCoords.current
+    if (!coords && gpsStatus.current === 'pending') {
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: false, maximumAge: 60000 })
+        })
+        coords = pos.coords
+        gpsCoords.current = coords
+        gpsStatus.current = 'ok'
+      } catch {}
+    }
+    if (coords) {
+      body.latitude = coords.latitude
+      body.longitude = coords.longitude
+    }
     try {
-      const info = getStudentInfo()
-      const body = {
-        student_id: info?.student_id || '',
-        student_name: info?.student_name || '',
-        seat: preview.seat || '',
-        room: preview.room || '',
-        sig: preview.sig || '',
-        iat: preview.iat || '',
-        ttl: preview.ttl || '',
-        ver: preview.ver || '',
-        confirm_abnormal: false,
-      }
       const result = await apiFetch('/signin', { method: 'POST', body: JSON.stringify(body) })
       navigate('/result', { state: { status: 'success', message: result.message, data: result } })
     } catch (err) {
@@ -66,6 +96,9 @@ export default function ScanPage() {
         <h2>扫码签到</h2>
       </div>
       <div className="camera-section">
+        <div style={{ fontSize: 12, color: gpsStatus.current === 'ok' ? '#52c41a' : '#999', marginBottom: 4, textAlign: 'center' }}>
+          定位: {gpsStatus.current === 'pending' ? '获取中...' : gpsStatus.current === 'ok' ? '已就绪' : '不可用'}
+        </div>
         {scanning && <CameraView onScan={handleScan} enabled={scanning} />}
         {error && <div className="camera-hint" style={{ color: 'red' }}>{error}</div>}
         {!scanning && !preview && <div className="camera-hint">等待扫码...</div>}

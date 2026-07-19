@@ -56,6 +56,11 @@ body {
 .btn-success { background: var(--success); color: #fff; }
 .btn-outline { background: transparent; border: 1px solid var(--primary); color: var(--primary); }
 .error-msg { color: var(--danger); font-size: 13px; text-align: center; margin-top: 12px; }
+.remember-row {
+  display: flex; align-items: center; gap: 6px; margin-top: 12px;
+  font-size: 14px; color: var(--text-secondary); cursor: pointer; user-select: none;
+}
+.remember-row input { width: 16px; height: 16px; cursor: pointer; }
 
 /* Scan Page */
 .scan-page { flex: 1; display: flex; flex-direction: column; }
@@ -133,6 +138,49 @@ body {
 }
 .tab-item.active { color: var(--primary); }
 .tab-icon { font-size: 20px; line-height: 1; }
+
+/* Records Page */
+.records-page {
+  flex: 1; display: flex; flex-direction: column; padding: 16px;
+}
+.records-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.records-header h2 { font-size: 18px; }
+.records-count { font-size: 13px; color: var(--text-secondary); }
+.records-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); font-size: 15px;
+}
+.records-list { display: flex; flex-direction: column; gap: 10px; }
+.record-card {
+  background: var(--card-bg); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow);
+}
+.record-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.record-course { font-size: 15px; font-weight: 500; }
+.record-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 500; flex-shrink: 0;
+}
+.badge-success { background: #f6ffed; color: var(--success); }
+.badge-late { background: #fff7e6; color: var(--warning); }
+.badge-warn { background: #fff2f0; color: var(--danger); }
+.record-info {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 13px; color: var(--text-secondary);
+}
+.record-warn {
+  margin-top: 8px; padding: 8px 10px; background: #fff7e6;
+  border-radius: 6px; font-size: 12px; color: var(--warning); line-height: 1.5;
+}
+.btn-load-more {
+  margin: 16px auto; width: 200px;
+}
 
 /* Profile Page */
 .profile-page {

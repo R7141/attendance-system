@@ -14,6 +14,10 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -24,11 +28,14 @@ services:
       DB_USER: root
       DB_PASSWORD: root
       DB_NAME: sign_in_system
+      REDIS_ADDR: redis:6379
       QR_SECRET_KEY: SuperSecretKeyForQRCodeSign
       AUTH_SECRET_KEY: SuperSecretKeyForAuth
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
 
   frontend:

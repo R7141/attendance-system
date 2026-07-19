@@ -6,6 +6,7 @@ export default function MainLayout() {
 
   const tabs = [
     { path: '/', label: '签到', icon: '📷' },
+    { path: '/records', label: '记录', icon: '📋' },
     { path: '/profile', label: '我的', icon: '👤' },
   ]
 
