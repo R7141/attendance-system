@@ -4392,6 +4392,26 @@ func GetAllRoomIDs(db *gorm.DB, c *gin.Context) {
 	successResponse(c, responseData)
 }
 
+// DeleteRoom 删除房间（检查是否被课程引用）
+func DeleteRoom(db *gorm.DB, c *gin.Context) {
+	v, ok := c.Get("authClaims")
+	if !ok { errorResponse(c, http.StatusUnauthorized, "未登录"); return }
+	claims := v.(AuthClaims)
+	if claims.OrgID == nil { errorResponse(c, http.StatusForbidden, "未加入组织"); return }
+	roomID := c.Query("room_id")
+	if roomID == "" { errorResponse(c, http.StatusBadRequest, "缺少 room_id 参数"); return }
+	var room Room
+	if err := db.Where("room_id = ? AND org_id = ?", roomID, *claims.OrgID).First(&room).Error; err != nil {
+		if err == gorm.ErrRecordNotFound { errorResponse(c, http.StatusNotFound, "房间不存在") } else { errorResponse(c, http.StatusInternalServerError, "查询失败") }
+		return
+	}
+	var count int64
+	if err := db.Model(&Course{}).Where("location = ?", roomID).Count(&count).Error; err != nil { errorResponse(c, http.StatusInternalServerError, "检查课程引用失败"); return }
+	if count > 0 { errorResponse(c, http.StatusConflict, "该房间已被课程引用，无法删除"); return }
+	if err := db.Delete(&room).Error; err != nil { errorResponse(c, http.StatusInternalServerError, "删除失败"); return }
+	successResponse(c, gin.H{"message": "房间删除成功"})
+}
+
 // sanitizeZipEntryName 处理相关逻辑
 func sanitizeZipEntryName(s string) string {
 	s = strings.TrimSpace(s)
@@ -5806,6 +5826,7 @@ func main() {
 	auth.GET("/roomseat", func(c *gin.Context) { GetRoomByID(db, c) })
 	auth.GET("/rooms", func(c *gin.Context) { GetAllRoomIDs(db, c) })
 	auth.POST("/room", func(c *gin.Context) { PostRoom(db, c) })
+	auth.DELETE("/room", func(c *gin.Context) { DeleteRoom(db, c) })
 	auth.GET("/room/qrcodes", func(c *gin.Context) { ExportRoomSeatQRCodesZip(db, c) })
 
 	// Course endpoints
@@ -5854,6 +5875,7 @@ func main() {
 	studentAuth := r.Group("/")
 	studentAuth.Use(studentAuthMiddleware())
 	studentAuth.GET("/student/me/profile", func(c *gin.Context) { GetStudentProfile(db, c) })
+	studentAuth.GET("/student/me/class", func(c *gin.Context) { GetStudentClass(db, c) })
 	studentAuth.GET("/student/me/records", func(c *gin.Context) { GetStudentRecords(db, c) })
 
 	// Public/Student endpoints
@@ -6029,6 +6051,24 @@ func GetStudentProfile(db *gorm.DB, c *gin.Context) {
 	var student Student
 	if err := db.First(&student, "student_id = ?", claims.StudentID).Error; err != nil { errorResponse(c, http.StatusNotFound, "学生不存在"); return }
 	successResponse(c, gin.H{"student_id": student.StudentID, "student_name": student.StudentName, "org_id": student.OrgID, "created_at": student.CreatedAt})
+}
+
+// GetStudentClass 获取学生所属班级（从花名册中反向查找）
+func GetStudentClass(db *gorm.DB, c *gin.Context) {
+	v, ok := c.Get("studentClaims")
+	if !ok { errorResponse(c, http.StatusUnauthorized, "未登录"); return }
+	claims := v.(StudentClaims)
+	if claims.OrgID == nil { successResponse(c, gin.H{}); return }
+	var rosters []ClassRoster
+	if err := db.Where("org_id = ?", *claims.OrgID).Find(&rosters).Error; err != nil { successResponse(c, gin.H{}); return }
+	for _, roster := range rosters {
+		members := parseMembersJSON(roster.Members)
+		if _, exists := members[claims.StudentID]; exists {
+			successResponse(c, gin.H{"class_name": roster.Name})
+			return
+		}
+	}
+	successResponse(c, gin.H{})
 }
 
 type StudentRecord struct {

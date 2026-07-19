@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getStudentInfo, clearStudentSession } from '../api'
+import { getStudentInfo, clearStudentSession, apiFetch } from '../api'
 
 export default function ProfilePage() {
   const info = getStudentInfo()
@@ -11,6 +11,20 @@ export default function ProfilePage() {
   )
   const [editingClass, setEditingClass] = useState(false)
   const [classInput, setClassInput] = useState(studentClass)
+  const [autoClass, setAutoClass] = useState(null)
+
+  useEffect(() => {
+    apiFetch('/student/me/class')
+      .then(data => {
+        const c = data?.class_name || ''
+        if (c) {
+          setStudentClass(c)
+          localStorage.setItem('studentClass', c)
+        }
+        setAutoClass(c)
+      })
+      .catch(() => setAutoClass(''))
+  }, [])
 
   const handleSaveClass = () => {
     const val = classInput.trim()
@@ -22,6 +36,36 @@ export default function ProfilePage() {
   const handleLogout = () => {
     clearStudentSession()
     navigate('/login', { replace: true })
+  }
+
+  const classRow = () => {
+    if (autoClass) {
+      return <span className="profile-value">{autoClass}</span>
+    }
+    if (autoClass === null) {
+      return <span className="profile-value">{studentClass || '加载中...'}</span>
+    }
+    if (editingClass) {
+      return (
+        <div className="profile-edit-group">
+          <input
+            type="text"
+            value={classInput}
+            onChange={e => setClassInput(e.target.value)}
+            placeholder="输入班级名称"
+            autoFocus
+            className="profile-input"
+          />
+          <button className="btn btn-primary btn-small" onClick={handleSaveClass}>保存</button>
+          <button className="btn btn-outline btn-small" onClick={() => setEditingClass(false)}>取消</button>
+        </div>
+      )
+    }
+    return (
+      <span className="profile-value profile-editable" onClick={() => { setClassInput(studentClass); setEditingClass(true) }}>
+        {studentClass || '点击设置'}
+      </span>
+    )
   }
 
   return (
@@ -42,24 +86,7 @@ export default function ProfilePage() {
         </div>
         <div className="profile-row">
           <span className="profile-label">班级</span>
-          {editingClass ? (
-            <div className="profile-edit-group">
-              <input
-                type="text"
-                value={classInput}
-                onChange={e => setClassInput(e.target.value)}
-                placeholder="输入班级名称"
-                autoFocus
-                className="profile-input"
-              />
-              <button className="btn btn-primary btn-small" onClick={handleSaveClass}>保存</button>
-              <button className="btn btn-outline btn-small" onClick={() => setEditingClass(false)}>取消</button>
-            </div>
-          ) : (
-            <span className="profile-value profile-editable" onClick={() => { setClassInput(studentClass); setEditingClass(true) }}>
-              {studentClass || '点击设置'}
-            </span>
-          )}
+          {classRow()}
         </div>
       </div>
 

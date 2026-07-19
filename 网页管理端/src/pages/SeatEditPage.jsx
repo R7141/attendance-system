@@ -377,6 +377,18 @@ function SeatEditPage() {
     } catch (error) { alert('创建失败: ' + error.message); }
   };
 
+  const handleDeleteRoom = async () => {
+    if (!selectedRoom) { alert('请先选择房间'); return; }
+    if (!confirm(`确认删除房间「${selectedRoom}」？此操作不可恢复。`)) return;
+    try {
+      await apiFetch(`/room?room_id=${encodeURIComponent(selectedRoom)}`, { method: 'DELETE' });
+      alert('房间删除成功');
+      setSelectedRoom('');
+      setSeats([]);
+      fetchRoomList();
+    } catch (error) { alert(error.message); }
+  };
+
   const handleExportSeatQRCodesZip = async () => {
     if (!selectedRoom) { alert('请先选择房间'); return; }
     try {
@@ -472,6 +484,7 @@ function SeatEditPage() {
             </div>
             <button onClick={handleExportSeatQRCodesZip} className="export-btn export-debug">导出座位二维码(压缩包)</button>
             <button onClick={handleSaveToBackend} className="export-btn save">保存到当前房间</button>
+            <button onClick={handleDeleteRoom} className="export-btn delete" style={{ borderColor: '#f44336', color: '#f44336' }}>删除房间</button>
             <button onClick={() => setShowCreateRoomModal(true)} className="export-btn create">创建房间</button>
           </div>
         </div>
